@@ -1,2 +1,23 @@
+# Local build output
+/bin/
+/dist/
+*.exe
+*.out
+*.test
+
+# Go coverage / profiling artifacts
+coverage.out
+*.prof
+
+# Editor / OS cruft
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+
+# PRD tracking artifacts (local only)
 /docs/prds/
+
+# Claude local settings
 /.claude/settings.local.json

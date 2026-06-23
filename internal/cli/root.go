@@ -36,14 +36,14 @@ func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newBackupCommand())
+	root.AddCommand(newForgetCommand())
+	root.AddCommand(newPruneCommand())
+	root.AddCommand(newCheckCommand())
 
 	stubs := []struct {
 		use   string
 		short string
 	}{
-		{"forget", "Apply the configured retention policy"},
-		{"prune", "Reclaim space from removed snapshots"},
-		{"check", "Verify repository integrity"},
 		{"snapshots", "List snapshots in the repository"},
 		{"ls", "List the contents of a snapshot"},
 		{"find", "Search for files across snapshots"},

@@ -39,14 +39,14 @@ func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newForgetCommand())
 	root.AddCommand(newPruneCommand())
 	root.AddCommand(newCheckCommand())
+	root.AddCommand(newSnapshotsCommand())
+	root.AddCommand(newLSCommand())
+	root.AddCommand(newFindCommand())
 
 	stubs := []struct {
 		use   string
 		short string
 	}{
-		{"snapshots", "List snapshots in the repository"},
-		{"ls", "List the contents of a snapshot"},
-		{"find", "Search for files across snapshots"},
 		{"restore", "Restore a snapshot to a target directory"},
 		{"dump", "Write a single file from a snapshot to stdout"},
 		{"schedule", "Install, uninstall, or inspect the OS scheduler unit"},
@@ -61,10 +61,5 @@ func addCommandGroups(root *cobra.Command) {
 			},
 		}
 		root.AddCommand(cmd)
-	}
-
-	// "list" is an alias-style command for "snapshots" per the PRD.
-	if snapshots, _, err := root.Find([]string{"snapshots"}); err == nil {
-		snapshots.Aliases = append(snapshots.Aliases, "list")
 	}
 }

@@ -42,13 +42,13 @@ func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newSnapshotsCommand())
 	root.AddCommand(newLSCommand())
 	root.AddCommand(newFindCommand())
+	root.AddCommand(newRestoreCommand())
+	root.AddCommand(newDumpCommand())
 
 	stubs := []struct {
 		use   string
 		short string
 	}{
-		{"restore", "Restore a snapshot to a target directory"},
-		{"dump", "Write a single file from a snapshot to stdout"},
 		{"schedule", "Install, uninstall, or inspect the OS scheduler unit"},
 	}
 

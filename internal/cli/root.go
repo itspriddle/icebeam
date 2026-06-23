@@ -30,8 +30,7 @@ func NewRootCommand() *cobra.Command {
 	return root
 }
 
-// addCommandGroups attaches the stubbed command surface described in the PRD.
-// Each command is replaced with a real implementation in a later story.
+// addCommandGroups attaches the full command surface described in the PRD.
 func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newInitCommand())
 	root.AddCommand(newRunCommand())
@@ -44,22 +43,5 @@ func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newFindCommand())
 	root.AddCommand(newRestoreCommand())
 	root.AddCommand(newDumpCommand())
-
-	stubs := []struct {
-		use   string
-		short string
-	}{
-		{"schedule", "Install, uninstall, or inspect the OS scheduler unit"},
-	}
-
-	for _, s := range stubs {
-		cmd := &cobra.Command{
-			Use:   s.use,
-			Short: s.short,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return errNotImplemented(cmd.Name())
-			},
-		}
-		root.AddCommand(cmd)
-	}
+	root.AddCommand(newScheduleCommand())
 }

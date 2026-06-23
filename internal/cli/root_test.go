@@ -52,8 +52,12 @@ func TestSnapshotsHasListAlias(t *testing.T) {
 	assert.Equal(t, "snapshots", cmd.Name())
 }
 
-func TestStubCommandsReportNotImplemented(t *testing.T) {
-	_, err := runRoot(t, "schedule")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not implemented")
+func TestScheduleHasSubcommands(t *testing.T) {
+	root := NewRootCommand()
+
+	for _, name := range []string{"install", "uninstall", "status"} {
+		cmd, _, err := root.Find([]string{"schedule", name})
+		require.NoError(t, err)
+		assert.Equal(t, name, cmd.Name(), "schedule should have the %q subcommand", name)
+	}
 }

@@ -17,6 +17,15 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("repository.url: must not be empty")
 	}
 
+	switch c.Credentials.Backend {
+	case "", "auto", "keychain", "file":
+	default:
+		return fmt.Errorf(
+			"credentials.backend: %q is not valid (use auto, keychain, or file)",
+			c.Credentials.Backend,
+		)
+	}
+
 	if len(c.Sets) == 0 {
 		return fmt.Errorf("set: at least one backup set must be defined")
 	}

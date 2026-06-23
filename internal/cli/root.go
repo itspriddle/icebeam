@@ -34,13 +34,13 @@ func NewRootCommand() *cobra.Command {
 // Each command is replaced with a real implementation in a later story.
 func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newInitCommand())
+	root.AddCommand(newRunCommand())
+	root.AddCommand(newBackupCommand())
 
 	stubs := []struct {
 		use   string
 		short string
 	}{
-		{"run", "Scheduler entrypoint: back up all configured sets"},
-		{"backup", "Back up one or more configured sets"},
 		{"forget", "Apply the configured retention policy"},
 		{"prune", "Reclaim space from removed snapshots"},
 		{"check", "Verify repository integrity"},

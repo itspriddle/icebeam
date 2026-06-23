@@ -53,7 +53,7 @@ func TestSnapshotsHasListAlias(t *testing.T) {
 }
 
 func TestStubCommandsReportNotImplemented(t *testing.T) {
-	_, err := runRoot(t, "backup")
+	_, err := runRoot(t, "forget")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not implemented")
 }

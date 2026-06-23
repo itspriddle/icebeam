@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/builtfast/icebeam/internal/cli"
+	"github.com/itspriddle/icebeam/internal/cli"
 )
 
 func main() {

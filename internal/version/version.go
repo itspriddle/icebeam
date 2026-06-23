@@ -2,7 +2,7 @@
 //
 // The values are intended to be overridden at link time via -ldflags, e.g.
 //
-//	go build -ldflags "-X github.com/builtfast/icebeam/internal/version.Version=1.2.3"
+//	go build -ldflags "-X github.com/itspriddle/icebeam/internal/version.Version=1.2.3"
 //
 // Until the release pipeline (US-012) wires real values, the defaults below are
 // used for local and development builds.

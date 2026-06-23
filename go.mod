@@ -1,4 +1,4 @@
-module github.com/builtfast/icebeam
+module github.com/itspriddle/icebeam
 
 go 1.26
 

@@ -1,6 +1,6 @@
 BINARY := icebeam
 BIN_DIR := bin
-PKG := github.com/builtfast/icebeam
+PKG := github.com/itspriddle/icebeam
 CMD := ./cmd/icebeam
 
 # Version metadata injected at build time. Real values are supplied by the

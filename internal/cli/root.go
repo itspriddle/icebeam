@@ -4,7 +4,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/builtfast/icebeam/internal/version"
+	"github.com/itspriddle/icebeam/internal/version"
 )
 
 // NewRootCommand builds the icebeam root command with all subcommands attached.

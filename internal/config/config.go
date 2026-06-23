@@ -90,7 +90,12 @@ type Set struct {
 
 // Default values applied to a fresh config.
 const (
-	defaultMinVersion = "0.16.0"
+	// defaultMinVersion is the lowest restic icebeam supports. restic 0.17.0 is
+	// the first release to emit the distinct exit codes (10 repository-not-exist,
+	// 11 repository-locked, 12 wrong-password) that icebeam's *ExitError
+	// predicates classify; older restic collapses those onto exit code 1, so the
+	// predicates would silently degrade below this floor.
+	defaultMinVersion = "0.17.0"
 	defaultLogLevel   = "info"
 )
 

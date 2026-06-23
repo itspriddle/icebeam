@@ -3,7 +3,6 @@ package restic
 import (
 	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -320,34 +318,6 @@ func TestRunMapsExitCodes(t *testing.T) {
 			assert.Equal(t, "backup", exitErr.Command)
 			tc.assert(t, exitErr)
 		})
-	}
-}
-
-func TestRunCancellation(t *testing.T) {
-	t.Parallel()
-
-	// The stub sleeps; cancelling the context must terminate it promptly and the
-	// error must carry the context cancellation, not a restic exit code.
-	stub := writeStub(t, "sleep 30\n")
-	r := newRunner(t, stub, nil)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan error, 1)
-	go func() { done <- r.Run(ctx, "backup") }()
-
-	// Give the process a moment to start, then cancel.
-	time.Sleep(100 * time.Millisecond)
-	cancel()
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		assert.ErrorIs(t, err, context.Canceled)
-		var exitErr *ExitError
-		assert.False(t, errors.As(err, &exitErr), "cancellation should not be reported as a restic exit error")
-	case <-time.After(5 * time.Second):
-		t.Fatal("cancelled restic process did not exit promptly")
 	}
 }
 

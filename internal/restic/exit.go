@@ -2,10 +2,11 @@ package restic
 
 import "fmt"
 
-// restic's documented exit codes. See the restic manual ("Exit Codes"). Older
-// restic releases collapsed several conditions onto code 1; the higher codes
-// were introduced in restic 0.17+. icebeam treats the specific codes as
-// authoritative when present.
+// restic's documented exit codes. See the restic manual ("Exit Codes"). The
+// higher codes (10/11/12) were introduced in restic 0.17.0; older releases
+// collapsed those conditions onto code 1. icebeam's default min_version is
+// therefore 0.17.0 (see config.defaultMinVersion), so these predicates are
+// authoritative for every supported restic.
 const (
 	// ExitSuccess indicates the command completed without error.
 	ExitSuccess = 0

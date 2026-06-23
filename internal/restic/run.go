@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -15,8 +16,10 @@ import (
 // Run executes a restic subcommand, streaming its combined output to the logger
 // line by line, and returns when the process exits. A non-zero exit is reported
 // as a *ExitError carrying the restic exit code (see exit code helpers such as
-// IsRepoLocked). The context cancels the underlying process cleanly on
-// SIGINT/SIGTERM (FR-12).
+// IsRepoLocked). Cancelling the context terminates restic and any child it
+// spawned promptly, with no orphan, and unblocks the output reader (FR-12); the
+// resulting error wraps context.Canceled, distinguishable from a restic failure
+// with errors.Is.
 //
 // args is the full restic argument vector beginning with the subcommand, e.g.
 // {"snapshots", "--tag", "home"}. Secrets are never included in args; they reach
@@ -91,6 +94,13 @@ func (r *Runner) captureJSON(ctx context.Context, args []string) ([]byte, error)
 
 // command constructs the *exec.Cmd for a subcommand with the restic environment
 // applied. The subcommand and its flags go in argv; secrets go only in env.
+//
+// The child inherits the ambient environment (HOME, PATH, TMPDIR, cert/proxy
+// vars, …) with icebeam's RESTIC_* and credential overrides appended last so
+// they win — important so restic can find its cache, certs, and tempdir under a
+// scheduler (launchd/systemd). It is also configured so that cancelling ctx
+// terminates restic and any descendant it spawned, leaving no orphan (FR-12);
+// see setProcessGroup.
 func (r *Runner) command(ctx context.Context, args []string) (*exec.Cmd, error) {
 	if err := r.ensureVersion(ctx); err != nil {
 		return nil, err
@@ -102,7 +112,8 @@ func (r *Runner) command(ctx context.Context, args []string) (*exec.Cmd, error) 
 	}
 
 	cmd := exec.CommandContext(ctx, r.binary, args...) //nolint:gosec // binary resolved from config/PATH; args are subcommands/flags, never secrets
-	cmd.Env = env
+	cmd.Env = append(os.Environ(), env...)
+	setProcessGroup(cmd)
 	return cmd, nil
 }
 
@@ -128,8 +139,9 @@ func (r *Runner) wait(ctx context.Context, cmd *exec.Cmd, args []string) error {
 		return nil
 	}
 
-	// exec.CommandContext kills the process when the context is cancelled; the
-	// resulting Wait error is incidental, so report the cancellation instead.
+	// On cancellation the context's Cancel func signals the process group and
+	// WaitDelay reaps it (see setProcessGroup); the resulting Wait error is
+	// incidental, so report the cancellation instead.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return fmt.Errorf("restic: %s cancelled: %w", commandName(args), ctxErr)
 	}

@@ -33,11 +33,12 @@ func NewRootCommand() *cobra.Command {
 // addCommandGroups attaches the stubbed command surface described in the PRD.
 // Each command is replaced with a real implementation in a later story.
 func addCommandGroups(root *cobra.Command) {
+	root.AddCommand(newInitCommand())
+
 	stubs := []struct {
 		use   string
 		short string
 	}{
-		{"init", "Guided setup: config, credentials, and repository initialization"},
 		{"run", "Scheduler entrypoint: back up all configured sets"},
 		{"backup", "Back up one or more configured sets"},
 		{"forget", "Apply the configured retention policy"},

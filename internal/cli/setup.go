@@ -29,10 +29,11 @@ type setupParams struct {
 	// credentials. They reach restic only via the environment, never argv.
 	restUsername string
 	restPassword string
-	// skipProbe is set on a re-run where neither the repository URL nor the
-	// repository password changed: the connection was verified on a prior run, so
-	// the engine rewrites an equivalent config and re-persists the unchanged
-	// secrets without probing or re-initializing the repository.
+	// skipProbe is set on a re-run where the repository URL, the repository
+	// password, and the REST credentials are all unchanged: the connection was
+	// verified on a prior run, so the engine rewrites an equivalent config and
+	// re-persists the unchanged secrets without probing or re-initializing the
+	// repository.
 	skipProbe bool
 }
 
@@ -56,10 +57,11 @@ type setupResult struct {
 func runSetup(ctx context.Context, p *prompter, logger *logging.Logger, params *setupParams) (*setupResult, error) {
 	var created bool
 	if params.skipProbe {
-		// Re-run with an unchanged repository URL and password: the connection was
-		// already verified, so persist the (possibly otherwise-edited) config and
-		// re-store the unchanged secrets without probing or re-initializing.
-		p.println("Repository URL and password unchanged; skipping re-verification.")
+		// Re-run with an unchanged repository URL, password, and REST credentials:
+		// the connection was already verified, so persist the (possibly
+		// otherwise-edited) config and re-store the unchanged secrets without
+		// probing or re-initializing.
+		p.println("Repository URL, password, and REST credentials unchanged; skipping re-verification.")
 	} else {
 		var err error
 		created, err = probeRepository(ctx, p, logger, params)

@@ -214,7 +214,7 @@ func openBrowse(cmd *cobra.Command) (browseRunner, func(), error) {
 		return nil, nil, err
 	}
 
-	store, err := credentials.Open(cfg.Credentials.Backend, mustConfigDir())
+	store, err := credentials.Open(mustConfigDir())
 	if err != nil {
 		_ = logger.Close()
 		return nil, nil, err

@@ -33,6 +33,26 @@ func TestValidateRejects(t *testing.T) {
 			wantField: "set",
 		},
 		{
+			name:      "negative keep_daily",
+			mutate:    func(c *Config) { c.Retention.KeepDaily = -1 },
+			wantField: "retention.keep_daily",
+		},
+		{
+			name:      "negative keep_weekly",
+			mutate:    func(c *Config) { c.Retention.KeepWeekly = -1 },
+			wantField: "retention.keep_weekly",
+		},
+		{
+			name:      "negative keep_monthly",
+			mutate:    func(c *Config) { c.Retention.KeepMonthly = -1 },
+			wantField: "retention.keep_monthly",
+		},
+		{
+			name:      "negative keep_yearly",
+			mutate:    func(c *Config) { c.Retention.KeepYearly = -1 },
+			wantField: "retention.keep_yearly",
+		},
+		{
 			name: "set with no paths",
 			mutate: func(c *Config) {
 				c.Sets[0].Paths = nil
@@ -70,13 +90,6 @@ func TestValidateRejects(t *testing.T) {
 			},
 			wantField: "set[1].name",
 		},
-		{
-			name: "invalid credentials backend",
-			mutate: func(c *Config) {
-				c.Credentials.Backend = "vault"
-			},
-			wantField: "credentials.backend",
-		},
 	}
 
 	for _, tt := range tests {
@@ -101,15 +114,5 @@ func TestValidateAcceptsSafeIdentifierVariants(t *testing.T) {
 		cfg := validConfig()
 		cfg.Sets[0].Name = name
 		assert.NoError(t, cfg.Validate(), "name %q should be valid", name)
-	}
-}
-
-func TestValidateAcceptsCredentialBackends(t *testing.T) {
-	t.Parallel()
-
-	for _, backend := range []string{"", "auto", "keychain", "file"} {
-		cfg := validConfig()
-		cfg.Credentials.Backend = backend
-		assert.NoError(t, cfg.Validate(), "backend %q should be valid", backend)
 	}
 }

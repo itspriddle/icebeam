@@ -14,6 +14,7 @@ CMD icebeam forget
 CMD icebeam init
 CMD icebeam ls
 CMD icebeam prune
+CMD icebeam reconfigure
 CMD icebeam restore
 CMD icebeam run
 CMD icebeam schedule
@@ -28,19 +29,35 @@ FLAG icebeam find --tag type=stringArray
 FLAG icebeam forget --dry-run type=bool
 FLAG icebeam forget --no-prune type=bool
 FLAG icebeam forget --prune type=bool
-FLAG icebeam init --backend type=string
 FLAG icebeam init --exclude type=stringArray
-FLAG icebeam init --force type=bool
+FLAG icebeam init --generate-password type=bool
+FLAG icebeam init --keep-daily type=int
+FLAG icebeam init --keep-monthly type=int
+FLAG icebeam init --keep-weekly type=int
+FLAG icebeam init --keep-yearly type=int
 FLAG icebeam init --password-stdin type=bool
 FLAG icebeam init --path type=stringArray
 FLAG icebeam init --repo type=string
-FLAG icebeam init --rest-password type=string
+FLAG icebeam init --rest-password-stdin type=bool
 FLAG icebeam init --rest-username type=string
 FLAG icebeam init --set type=string
 FLAG icebeam init --tag type=stringArray
 FLAG icebeam ls --host type=string
 FLAG icebeam ls --json type=bool
 FLAG icebeam ls --tag type=stringArray
+FLAG icebeam reconfigure --exclude type=stringArray
+FLAG icebeam reconfigure --generate-password type=bool
+FLAG icebeam reconfigure --keep-daily type=int
+FLAG icebeam reconfigure --keep-monthly type=int
+FLAG icebeam reconfigure --keep-weekly type=int
+FLAG icebeam reconfigure --keep-yearly type=int
+FLAG icebeam reconfigure --password-stdin type=bool
+FLAG icebeam reconfigure --path type=stringArray
+FLAG icebeam reconfigure --repo type=string
+FLAG icebeam reconfigure --rest-password-stdin type=bool
+FLAG icebeam reconfigure --rest-username type=string
+FLAG icebeam reconfigure --set type=string
+FLAG icebeam reconfigure --tag type=stringArray
 FLAG icebeam restore --exclude type=stringArray
 FLAG icebeam restore --force type=bool
 FLAG icebeam restore --include type=stringArray

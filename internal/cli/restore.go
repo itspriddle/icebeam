@@ -189,7 +189,7 @@ func openRestore(cmd *cobra.Command) (restoreRunner, *logging.Logger, func(), er
 		return nil, nil, nil, err
 	}
 
-	store, err := credentials.Open(cfg.Credentials.Backend, mustConfigDir())
+	store, err := credentials.Open(mustConfigDir())
 	if err != nil {
 		_ = logger.Close()
 		return nil, nil, nil, err

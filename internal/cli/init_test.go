@@ -658,6 +658,144 @@ func TestInitRerunFlagOverridesLoadedDefault(t *testing.T) {
 	assert.Equal(t, []string{"/data"}, cfg.Sets[0].Paths)
 }
 
+// seedExistingConfigWithREST runs init once against a REST repo, storing a REST
+// username and password alongside the repository password, so a re-run test can
+// exercise the changed-REST-credential skip-probe logic. It returns the config
+// path.
+func seedExistingConfigWithREST(t *testing.T, stub *stubRunner) string {
+	t.Helper()
+	// --rest-username supplies the username; --rest-password-stdin reads the REST
+	// password from stdin, then the repository password is the next stdin line.
+	_, err := runInitCmd(t, "rsecret\npw\n",
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data",
+		"--rest-username", "alice",
+		"--rest-password-stdin",
+	)
+	require.NoError(t, err)
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	return cfgPath
+}
+
+func TestInitRerunChangedRESTPasswordReVerifies(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	cfgPath := seedExistingConfigWithREST(t, stub)
+
+	probesAfterSeed := len(stub.calls)
+
+	// Re-run keeping the repo URL and repository password, but entering a NEW REST
+	// password. Even though the repo URL + repo password are unchanged, the changed
+	// REST credential must force the probe so a wrong new REST password is caught
+	// before it is persisted.
+	stdin := strings.Join([]string{
+		"",             // repo URL → keep
+		"",             // set name → keep
+		"",             // paths → keep
+		"", "", "", "", // retention → keep existing
+		"",          // REST username → keep stored ("alice")
+		"newsecret", // REST password → change
+		"",          // repo password → keep existing
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "skipping re-verification")
+
+	// A probe ran on the changed-REST-password re-run.
+	require.Greater(t, len(stub.calls), probesAfterSeed)
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[probesAfterSeed])
+
+	// The new REST password was persisted after the probe verified it.
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	pass, err := store.Get(credentials.RESTPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "newsecret", pass)
+}
+
+func TestInitRerunWrongNewRESTCredentialAbortsWithoutPersisting(t *testing.T) {
+	isolateXDG(t)
+
+	// The seed probe succeeds; the re-run probe (with the changed REST password)
+	// fails with a generic error (a REST 401 has no distinct restic exit code, so
+	// it falls into the generic-error branch). Empty input at the re-enter prompt
+	// defaults to abort, so nothing new is persisted.
+	stub := &stubRunner{
+		catQueue: []error{
+			nil, // seed probe → existing repo verified
+			&restic.ExitError{Code: restic.ExitRepoLocked, Command: "cat"}, // re-run probe → generic failure
+		},
+	}
+	withStubRunner(t, stub)
+	cfgPath := seedExistingConfigWithREST(t, stub)
+
+	probesAfterSeed := len(stub.calls)
+
+	// Keep everything but enter a wrong new REST password. The probe fails and the
+	// re-enter prompt is answered blank, defaulting to abort.
+	stdin := strings.Join([]string{
+		"",             // repo URL → keep
+		"",             // set name → keep
+		"",             // paths → keep
+		"", "", "", "", // retention → keep existing
+		"",         // REST username → keep stored
+		"wrongnew", // REST password → change (wrong)
+		"",         // repo password → keep existing
+		"",         // re-enter? → blank → abort
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "aborted")
+	assert.Contains(t, out, "Could not reach repository")
+
+	// The probe ran on the re-run (so the wrong REST credential was tested).
+	require.Greater(t, len(stub.calls), probesAfterSeed)
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[probesAfterSeed])
+
+	// The wrong new REST password was NOT persisted: the stored value is still the
+	// original from the seed run.
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	pass, err := store.Get(credentials.RESTPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "rsecret", pass)
+}
+
+func TestInitRerunNoRESTChangeStillSkipsProbe(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	seedExistingConfigWithREST(t, stub)
+
+	probesAfterSeed := len(stub.calls)
+
+	// Re-run keeping every secret, including the stored REST credentials. With the
+	// repo URL, repo password, and REST credentials all unchanged, the probe is
+	// skipped — no regression for the common no-op re-run.
+	stdin := strings.Join([]string{
+		"",             // repo URL → keep
+		"",             // set name → keep
+		"",             // paths → keep
+		"", "", "", "", // retention → keep existing
+		"", // REST username → keep stored
+		"", // REST password → keep stored
+		"", // repo password → keep existing
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin)
+	require.NoError(t, err)
+	assert.Contains(t, out, "skipping re-verification")
+
+	// No additional probe ran on the fully-unchanged re-run.
+	assert.Len(t, stub.calls, probesAfterSeed)
+}
+
 func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 	isolateXDG(t)
 

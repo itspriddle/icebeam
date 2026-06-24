@@ -195,10 +195,15 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 		password:     password,
 		restUsername: opts.restUsername,
 		restPassword: opts.restPassword,
-		// The repository password is only re-verified by the probe when it (or the
-		// repository URL) changed; an unchanged re-run skips the probe and rewrites
-		// an equivalent config, leaving stored secrets intact.
-		skipProbe: existing != nil && !passwordChanged && repoURLUnchanged(opts.repo, existing),
+		// The probe is skipped only when nothing that affects reachability changed:
+		// the repository URL, the repository password, and the REST-server
+		// credentials are all unchanged from the verified setup. A changed REST
+		// username or password must re-run the probe so a wrong new REST credential
+		// is caught before it is persisted, not written to disk unverified.
+		skipProbe: existing != nil &&
+			!passwordChanged &&
+			repoURLUnchanged(opts.repo, existing) &&
+			restCredentialsUnchanged(opts, stored),
 	}
 
 	if _, err := runSetup(cmd.Context(), p, logger, params); err != nil {
@@ -281,6 +286,18 @@ func getStoredSecret(store credentials.CredentialStore, name string) (value stri
 // the existing config (after the same trimming buildConfig applies).
 func repoURLUnchanged(repo string, existing *config.Config) bool {
 	return existing != nil && strings.TrimSpace(repo) == existing.Repository.URL
+}
+
+// restCredentialsUnchanged reports whether the effective REST-server username and
+// password (after normalizeRepoURL has folded in any URL-embedded credentials and
+// collectRESTCredentials has resolved kept/entered values) match what is already
+// stored. A credential that is not stored has an empty stored value, so leaving
+// the prompt empty (or a non-REST repo with no REST creds) compares equal and the
+// probe is skipped; entering a new REST username or password makes them differ so
+// the probe re-runs and catches a wrong new credential before it is persisted.
+func restCredentialsUnchanged(opts *initOptions, stored *storedSecrets) bool {
+	return opts.restUsername == stored.restUsername &&
+		opts.restPassword == stored.restPassword
 }
 
 // collectInputs fills in any missing options interactively. Flag-supplied values

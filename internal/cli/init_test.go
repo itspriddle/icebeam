@@ -13,6 +13,7 @@ import (
 
 	"github.com/itspriddle/icebeam/internal/config"
 	"github.com/itspriddle/icebeam/internal/credentials"
+	"github.com/itspriddle/icebeam/internal/logging"
 	"github.com/itspriddle/icebeam/internal/restic"
 )
 
@@ -37,7 +38,7 @@ func (s *stubRunner) Run(_ context.Context, args ...string) error {
 func withStubRunner(t *testing.T, stub *stubRunner) {
 	t.Helper()
 	orig := newResticRunner
-	newResticRunner = func(*config.Config, credentials.CredentialStore) (resticRunner, error) {
+	newResticRunner = func(*config.Config, credentials.CredentialStore, *logging.Logger) (resticRunner, error) {
 		return stub, nil
 	}
 	t.Cleanup(func() { newResticRunner = orig })
@@ -123,6 +124,39 @@ func TestInitNonInteractiveInitializesAbsentRepo(t *testing.T) {
 
 	assert.Contains(t, out, "initializing")
 	assert.Contains(t, out, "icebeam run")
+}
+
+func TestInitLogsStartAndEndThroughTheLogger(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{
+		results: map[string]error{
+			"cat": &restic.ExitError{Code: restic.ExitRepoNotExist, Command: "cat"},
+		},
+	}
+	withStubRunner(t, stub)
+
+	_, err := runInitCmd(t, "hunter2\n",
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home",
+		"--path", "/data",
+		"--backend", "file",
+		"--password-stdin",
+	)
+	require.NoError(t, err)
+
+	// The init probe is wrapped in LogStart/LogEnd, so the persistent log (in the
+	// isolated XDG state dir) records a start and a success-end line for `init`.
+	cfg := config.Default()
+	logPath, err := logging.ResolvePath(&cfg)
+	require.NoError(t, err)
+	data, err := os.ReadFile(logPath) //nolint:gosec // log path derived from isolated XDG state dir, not arbitrary input
+	require.NoError(t, err)
+	logged := string(data)
+	assert.Contains(t, logged, "run start")
+	assert.Contains(t, logged, "run end")
+	assert.Contains(t, logged, `"command":"init"`)
+	assert.Contains(t, logged, `"outcome":"success"`)
 }
 
 func TestInitVerifiesExistingRepoWithoutClobbering(t *testing.T) {

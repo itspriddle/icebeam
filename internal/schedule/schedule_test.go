@@ -35,6 +35,9 @@ func TestNewSchedule(t *testing.T) {
 		{name: "raw calendar", calendar: "*-*-* 03:00:00", want: Schedule{Calendar: "*-*-* 03:00:00"}},
 		{name: "unknown interval", interval: "fortnightly", wantErr: "unknown --interval"},
 		{name: "both set", interval: "daily", calendar: "*-*-* 03:00:00", wantErr: "not both"},
+		{name: "calendar with newline", calendar: "*-*-* 03:00:00\nExecStart=/bin/evil", wantErr: "single line"},
+		{name: "calendar with carriage return", calendar: "*-*-* 03:00:00\rfoo", wantErr: "single line"},
+		{name: "calendar with control char", calendar: "*-*-* 03:00:00\x00", wantErr: "control characters"},
 	}
 
 	for _, tt := range tests {

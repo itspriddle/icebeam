@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"github.com/itspriddle/icebeam/internal/config"
 	"github.com/itspriddle/icebeam/internal/credentials"
+	"github.com/itspriddle/icebeam/internal/logging"
 	"github.com/itspriddle/icebeam/internal/restic"
 )
 
@@ -24,9 +26,11 @@ type resticRunner interface {
 }
 
 // newResticRunner builds the restic runner the init command probes the
-// repository with. It is a package variable so tests can swap in a stub.
-var newResticRunner = func(cfg *config.Config, store credentials.CredentialStore) (resticRunner, error) {
-	return restic.New(cfg, store, nil)
+// repository with. It threads the persistent logger so restic's output during a
+// first-time setup is recorded. It is a package variable so tests can swap in a
+// stub.
+var newResticRunner = func(cfg *config.Config, store credentials.CredentialStore, logger *logging.Logger) (resticRunner, error) {
+	return restic.New(cfg, store, logger)
 }
 
 // initOptions collects the values that drive `icebeam init`, populated from
@@ -112,7 +116,13 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 		return err
 	}
 
-	if err := initRepository(cmd.Context(), p, cfg, store); err != nil {
+	logger, err := buildLogger(cfg, cmd.ErrOrStderr())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = logger.Close() }()
+
+	if err := initRepository(cmd.Context(), p, logger, cfg, store); err != nil {
 		return err
 	}
 
@@ -222,9 +232,11 @@ func storeSecrets(opts *initOptions, password string) (credentials.CredentialSto
 }
 
 // initRepository probes the repository and initializes it when absent. An
-// already-initialized repository is verified for access and left untouched.
-func initRepository(ctx context.Context, p *prompter, cfg *config.Config, store credentials.CredentialStore) error {
-	runner, err := newResticRunner(cfg, store)
+// already-initialized repository is verified for access and left untouched. The
+// probe is wrapped in LogStart/LogEnd so a failed first-time setup is recorded
+// in the persistent log.
+func initRepository(ctx context.Context, p *prompter, logger *logging.Logger, cfg *config.Config, store credentials.CredentialStore) error {
+	runner, err := newResticRunner(cfg, store, logger)
 	if err != nil {
 		return err
 	}
@@ -232,8 +244,12 @@ func initRepository(ctx context.Context, p *prompter, cfg *config.Config, store 
 	// `cat config` reads the repository's config blob: it succeeds on an
 	// initialized, accessible repository and returns the repo-not-exist code
 	// when the repository has not been created yet.
-	err = runner.Run(ctx, "cat", "config")
+	probeArgs := []string{"cat", "config"}
+	logger.LogStart("init", probeArgs)
+	start := time.Now()
+	err = runner.Run(ctx, probeArgs...)
 	if err == nil {
+		logger.LogEnd("init", time.Since(start), nil)
 		p.println("Repository already initialized; verified access.")
 		return nil
 	}
@@ -241,13 +257,16 @@ func initRepository(ctx context.Context, p *prompter, cfg *config.Config, store 
 	var exitErr *restic.ExitError
 	if errors.As(err, &exitErr) && exitErr.IsRepoNotExist() {
 		p.println("Repository not found; initializing...")
-		if err := runner.Run(ctx, "init"); err != nil {
-			return fmt.Errorf("initialize repository: %w", err)
+		initErr := runner.Run(ctx, "init")
+		logger.LogEnd("init", time.Since(start), initErr)
+		if initErr != nil {
+			return fmt.Errorf("initialize repository: %w", initErr)
 		}
 		p.println("Repository initialized.")
 		return nil
 	}
 
+	logger.LogEnd("init", time.Since(start), err)
 	return fmt.Errorf("access repository: %w", err)
 }
 

@@ -7,6 +7,7 @@ package schedule
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Label is the launchd label / systemd unit base name icebeam installs under.
@@ -46,6 +47,9 @@ func NewSchedule(interval, calendar string) (Schedule, error) {
 		if interval != "" {
 			return Schedule{}, fmt.Errorf("specify either --interval or --calendar, not both")
 		}
+		if err := validateCalendar(calendar); err != nil {
+			return Schedule{}, err
+		}
 		return Schedule{Calendar: calendar}, nil
 	}
 
@@ -60,6 +64,20 @@ func NewSchedule(interval, calendar string) (Schedule, error) {
 		}
 	}
 	return Schedule{}, fmt.Errorf("unknown --interval %q; valid values: %s", interval, intervalList())
+}
+
+// validateCalendar rejects a calendar value containing a newline or other
+// control character. The value is written verbatim into the systemd timer as
+// `OnCalendar=<value>`, so a newline would inject arbitrary extra unit
+// directives; rejecting it keeps a malformed value loud instead of producing a
+// broken (or maliciously crafted) unit.
+func validateCalendar(calendar string) error {
+	for _, r := range calendar {
+		if r == '\n' || r == '\r' || unicode.IsControl(r) {
+			return fmt.Errorf("invalid --calendar %q: must be a single line with no control characters", calendar)
+		}
+	}
+	return nil
 }
 
 // intervalList renders the supported intervals for an error message.

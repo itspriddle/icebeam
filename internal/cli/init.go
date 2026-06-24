@@ -100,15 +100,25 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 		return err
 	}
 
-	if opts.passwordStdin && opts.restPasswordStdin {
-		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
-	}
-
 	// Load the existing config (if any) to pre-fill prompts. A missing config is
 	// the first-run case (existing stays nil); a malformed config is a real error.
 	existing, err := loadExistingConfig(configPath)
 	if err != nil {
 		return err
+	}
+
+	return runSetupFlow(cmd, opts, existing, configPath)
+}
+
+// runSetupFlow is the shared body driven by both `init` and `reconfigure`. It
+// collects inputs (pre-filled from existing when supplied), resolves the
+// credential backend and stored secrets, then hands the result to the
+// validate-first setup engine, which probes the repository before persisting
+// anything. The two callers differ only in how existing is obtained: init treats
+// a missing config as a first run (existing nil), while reconfigure requires one.
+func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config, configPath string) error {
+	if opts.passwordStdin && opts.restPasswordStdin {
+		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
 	}
 
 	p := newPrompter(cmd.InOrStdin(), cmd.OutOrStdout())

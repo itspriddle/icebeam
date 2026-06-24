@@ -33,6 +33,7 @@ func NewRootCommand() *cobra.Command {
 // addCommandGroups attaches the full command surface described in the PRD.
 func addCommandGroups(root *cobra.Command) {
 	root.AddCommand(newInitCommand())
+	root.AddCommand(newReconfigureCommand())
 	root.AddCommand(newRunCommand())
 	root.AddCommand(newBackupCommand())
 	root.AddCommand(newForgetCommand())

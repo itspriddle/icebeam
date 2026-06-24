@@ -14,6 +14,7 @@ CMD icebeam forget
 CMD icebeam init
 CMD icebeam ls
 CMD icebeam prune
+CMD icebeam reconfigure
 CMD icebeam restore
 CMD icebeam run
 CMD icebeam schedule
@@ -40,6 +41,15 @@ FLAG icebeam init --tag type=stringArray
 FLAG icebeam ls --host type=string
 FLAG icebeam ls --json type=bool
 FLAG icebeam ls --tag type=stringArray
+FLAG icebeam reconfigure --backend type=string
+FLAG icebeam reconfigure --exclude type=stringArray
+FLAG icebeam reconfigure --password-stdin type=bool
+FLAG icebeam reconfigure --path type=stringArray
+FLAG icebeam reconfigure --repo type=string
+FLAG icebeam reconfigure --rest-password-stdin type=bool
+FLAG icebeam reconfigure --rest-username type=string
+FLAG icebeam reconfigure --set type=string
+FLAG icebeam reconfigure --tag type=stringArray
 FLAG icebeam restore --exclude type=stringArray
 FLAG icebeam restore --force type=bool
 FLAG icebeam restore --include type=stringArray

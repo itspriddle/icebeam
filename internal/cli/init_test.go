@@ -476,6 +476,40 @@ func TestInitPlainRESTURLIsUnaffected(t *testing.T) {
 	assert.NotContains(t, out, "moved to the credential store")
 }
 
+func TestInitPersistsNonDefaultRetentionFlags(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{
+		results: map[string]error{
+			"cat": &restic.ExitError{Code: restic.ExitRepoNotExist, Command: "cat"},
+		},
+	}
+	withStubRunner(t, stub)
+
+	// Pass non-default keep-* values via flags (the defaults are 7/4/12/3). Using
+	// --password-stdin makes the run fully scripted so the retention prompts are
+	// suppressed and the flag values flow straight through to config.Retention; a
+	// value dropped before persistence would be caught here.
+	_, err := runInitCmd(t, "hunter2\n",
+		"--repo", "sftp:user@host:/srv/backup",
+		"--set", "home", "--path", "/data",
+		"--keep-daily", "99", "--keep-weekly", "8",
+		"--keep-monthly", "24", "--keep-yearly", "5",
+		"--password-stdin",
+	)
+	require.NoError(t, err)
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+
+	assert.Equal(t, 99, cfg.Retention.KeepDaily)
+	assert.Equal(t, 8, cfg.Retention.KeepWeekly)
+	assert.Equal(t, 24, cfg.Retention.KeepMonthly)
+	assert.Equal(t, 5, cfg.Retention.KeepYearly)
+}
+
 // seedExistingConfig runs init once to leave a complete config and stored
 // secrets on the isolated XDG dir, returning the config path so a re-run test can
 // assert against the pre-filled defaults.

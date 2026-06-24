@@ -143,6 +143,53 @@ func TestDefaultPromptsReturnDefaultOnEndOfInput(t *testing.T) {
 	})
 }
 
+// TestAskIntDefaultParsesAndReprompts covers askIntDefault's value-entry and
+// re-prompt-on-invalid paths (the empty/EOF→default branch is pinned by
+// TestDefaultPromptsReturnDefaultOnEndOfInput).
+func TestAskIntDefaultParsesAndReprompts(t *testing.T) {
+	t.Parallel()
+
+	t.Run("entered value overrides the default", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTestPrompter("12\n").askIntDefault("Keep daily", 7)
+		require.NoError(t, err)
+		assert.Equal(t, 12, got)
+	})
+
+	t.Run("zero is accepted", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTestPrompter("0\n").askIntDefault("Keep daily", 7)
+		require.NoError(t, err)
+		assert.Zero(t, got)
+	})
+
+	t.Run("non-numeric answer re-prompts then accepts", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTestPrompter("nope\n5\n").askIntDefault("Keep daily", 7)
+		require.NoError(t, err)
+		assert.Equal(t, 5, got)
+	})
+
+	t.Run("negative answer re-prompts then accepts", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTestPrompter("-3\n5\n").askIntDefault("Keep daily", 7)
+		require.NoError(t, err)
+		assert.Equal(t, 5, got)
+	})
+
+	t.Run("invalid answer then EOF returns the default", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := newTestPrompter("nope\n").askIntDefault("Keep daily", 7)
+		require.NoError(t, err)
+		assert.Equal(t, 7, got)
+	})
+}
+
 // TestAskSecretOrGenerateOffersGeneration pins the fresh-setup password prompt:
 // a blank answer (or exhausted stdin) selects generation, and any entered value
 // is used as-is. It never loops, so an exhausted stdin can never spin.

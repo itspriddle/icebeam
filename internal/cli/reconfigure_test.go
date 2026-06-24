@@ -117,3 +117,27 @@ func TestReconfigureAcceptsValueFlags(t *testing.T) {
 	assert.Equal(t, "home", cfg.Sets[0].Name)
 	assert.Equal(t, []string{"/data"}, cfg.Sets[0].Paths)
 }
+
+func TestReconfigurePersistsNonDefaultRetentionFlags(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	cfgPath := seedExistingConfig(t, stub)
+
+	// Reconfigure non-default keep-* values via flags. The repo URL and password
+	// are unchanged so the run is a skip-probe re-run; only the (kept) password
+	// prompt remains. The flag values must land in the persisted config.Retention.
+	_, err := runReconfigureCmd(t, "\n",
+		"--keep-daily", "99", "--keep-weekly", "8",
+		"--keep-monthly", "24", "--keep-yearly", "5",
+	)
+	require.NoError(t, err)
+
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, 99, cfg.Retention.KeepDaily)
+	assert.Equal(t, 8, cfg.Retention.KeepWeekly)
+	assert.Equal(t, 24, cfg.Retention.KeepMonthly)
+	assert.Equal(t, 5, cfg.Retention.KeepYearly)
+}

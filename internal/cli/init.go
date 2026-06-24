@@ -84,7 +84,8 @@ func newInitCommand() *cobra.Command {
 }
 
 // runInit executes the init flow: resolve inputs, guard against clobbering an
-// existing config, write config + secrets, then probe/initialize the repository.
+// existing config, then drive the validate-first setup engine, which probes the
+// repository *before* it writes config.toml or any secret.
 func runInit(cmd *cobra.Command, opts *initOptions) error {
 	configPath, err := config.ConfigPath()
 	if err != nil {
@@ -107,14 +108,6 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 	}
 
 	cfg := buildConfig(opts)
-	if err := cfg.SaveFile(configPath); err != nil {
-		return err
-	}
-
-	store, err := storeSecrets(opts, password)
-	if err != nil {
-		return err
-	}
 
 	logger, err := buildLogger(cfg, cmd.ErrOrStderr())
 	if err != nil {
@@ -122,11 +115,21 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 	}
 	defer func() { _ = logger.Close() }()
 
-	if err := initRepository(cmd.Context(), p, logger, cfg, store); err != nil {
+	params := &setupParams{
+		cfg:          cfg,
+		configPath:   configPath,
+		backend:      opts.backend,
+		password:     password,
+		restUsername: opts.restUsername,
+		restPassword: opts.restPassword,
+	}
+
+	result, err := runSetup(cmd.Context(), p, logger, params)
+	if err != nil {
 		return err
 	}
 
-	printSummary(p, cfg, store, configPath)
+	printSummary(p, cfg, result.store, configPath)
 	return nil
 }
 
@@ -200,74 +203,28 @@ func buildConfig(opts *initOptions) *config.Config {
 	return &cfg
 }
 
-// storeSecrets opens the credential store for the configured backend and stores
-// the repository password plus any REST-server credentials.
-func storeSecrets(opts *initOptions, password string) (credentials.CredentialStore, error) {
-	configDir, err := config.ConfigDir()
-	if err != nil {
-		return nil, err
-	}
-
-	store, err := credentials.Open(opts.backend, configDir)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := store.Set(credentials.RepoPassword, password); err != nil {
-		return nil, err
-	}
-
-	if opts.restUsername != "" {
-		if err := store.Set(credentials.RESTUsername, opts.restUsername); err != nil {
-			return nil, err
-		}
-	}
-	if opts.restPassword != "" {
-		if err := store.Set(credentials.RESTPassword, opts.restPassword); err != nil {
-			return nil, err
-		}
-	}
-
-	return store, nil
-}
-
-// initRepository probes the repository and initializes it when absent. An
-// already-initialized repository is verified for access and left untouched. The
-// probe is wrapped in LogStart/LogEnd so a failed first-time setup is recorded
-// in the persistent log.
+// initRepository creates the repository with `restic init`. It is called only
+// after the setup engine's probe has confirmed the repository does not yet
+// exist and config + secrets have been persisted, so it never probes itself. The
+// init is wrapped in LogStart/LogEnd so a first-time setup is recorded in the
+// persistent log.
 func initRepository(ctx context.Context, p *prompter, logger *logging.Logger, cfg *config.Config, store credentials.CredentialStore) error {
 	runner, err := newResticRunner(cfg, store, logger)
 	if err != nil {
 		return err
 	}
 
-	// `cat config` reads the repository's config blob: it succeeds on an
-	// initialized, accessible repository and returns the repo-not-exist code
-	// when the repository has not been created yet.
-	probeArgs := []string{"cat", "config"}
-	logger.LogStart("init", probeArgs)
+	p.println("Initializing repository...")
+	initArgs := []string{"init"}
+	logger.LogStart("init", initArgs)
 	start := time.Now()
-	err = runner.Run(ctx, probeArgs...)
-	if err == nil {
-		logger.LogEnd("init", time.Since(start), nil)
-		p.println("Repository already initialized; verified access.")
-		return nil
+	initErr := runner.Run(ctx, initArgs...)
+	logger.LogEnd("init", time.Since(start), initErr)
+	if initErr != nil {
+		return fmt.Errorf("initialize repository: %w", initErr)
 	}
-
-	var exitErr *restic.ExitError
-	if errors.As(err, &exitErr) && exitErr.IsRepoNotExist() {
-		p.println("Repository not found; initializing...")
-		initErr := runner.Run(ctx, "init")
-		logger.LogEnd("init", time.Since(start), initErr)
-		if initErr != nil {
-			return fmt.Errorf("initialize repository: %w", initErr)
-		}
-		p.println("Repository initialized.")
-		return nil
-	}
-
-	logger.LogEnd("init", time.Since(start), err)
-	return fmt.Errorf("access repository: %w", err)
+	p.println("Repository initialized.")
+	return nil
 }
 
 // printSummary reports the configured repository, credential backend, sets, log

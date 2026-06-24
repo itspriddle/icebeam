@@ -22,12 +22,23 @@ import (
 type stubRunner struct {
 	calls   [][]string
 	results map[string]error // keyed by the first arg (subcommand)
+	// catQueue, when non-nil, supplies one result per `cat config` probe in
+	// order (used to drive the wrong-password-then-correct retry loop). It takes
+	// precedence over results["cat"]; once drained, the last entry is reused.
+	catQueue []error
 }
 
 func (s *stubRunner) Run(_ context.Context, args ...string) error {
 	s.calls = append(s.calls, args)
 	if len(args) == 0 {
 		return nil
+	}
+	if args[0] == "cat" && s.catQueue != nil {
+		err := s.catQueue[0]
+		if len(s.catQueue) > 1 {
+			s.catQueue = s.catQueue[1:]
+		}
+		return err
 	}
 	return s.results[args[0]]
 }
@@ -122,7 +133,7 @@ func TestInitNonInteractiveInitializesAbsentRepo(t *testing.T) {
 		assert.NotContains(t, strings.Join(call, " "), "hunter2")
 	}
 
-	assert.Contains(t, out, "initializing")
+	assert.Contains(t, out, "Initializing")
 	assert.Contains(t, out, "icebeam run")
 }
 
@@ -262,25 +273,82 @@ func TestInitForceOverwritesExistingConfig(t *testing.T) {
 	assert.Equal(t, "rest:https://nas.local:8000/new", cfg.Repository.URL)
 }
 
-func TestInitPropagatesRepoAccessError(t *testing.T) {
+func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 	isolateXDG(t)
 
-	// A wrong-password error on probe is neither success nor repo-not-exist, so
-	// init must surface it rather than try to (re)initialize.
+	// First probe reports a wrong password; the engine re-prompts only the
+	// password and retries, where the second probe succeeds (existing repo).
 	stub := &stubRunner{
-		results: map[string]error{
-			"cat": &restic.ExitError{Code: restic.ExitWrongPassword, Command: "cat"},
+		catQueue: []error{
+			&restic.ExitError{Code: restic.ExitWrongPassword, Command: "cat"},
+			nil,
 		},
 	}
 	withStubRunner(t, stub)
 
-	_, err := runInitCmd(t, "pw\n",
+	// The interactive stdin supplies the (wrong) password via --password-stdin,
+	// then a corrected password at the re-prompt. Use the non-stdin path so the
+	// re-prompt reads from stdin as a plain line.
+	stdin := strings.Join([]string{
+		"badpass",  // initial repository password prompt
+		"goodpass", // re-prompt after wrong-password
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin,
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data", "--backend", "file",
+	)
+	require.NoError(t, err)
+
+	// Two probes ran (wrong then correct); no `init` on an existing repo.
+	require.Len(t, stub.calls, 2)
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[0])
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[1])
+	assert.Contains(t, out, "rejected")
+	assert.Contains(t, out, "already initialized")
+
+	// The corrected password (not the rejected one) is what got persisted.
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+	got, err := store.Get(credentials.RepoPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "goodpass", got)
+}
+
+func TestInitGenericProbeFailureAbortsWithoutPersisting(t *testing.T) {
+	isolateXDG(t)
+
+	// A non-password, non-not-exist failure (e.g. repo locked / host
+	// unreachable) surfaces restic's message and offers re-enter or abort.
+	// Empty input at the yes/no prompt defaults to abort.
+	stub := &stubRunner{
+		results: map[string]error{
+			"cat": &restic.ExitError{Code: restic.ExitRepoLocked, Command: "cat"},
+		},
+	}
+	withStubRunner(t, stub)
+
+	out, err := runInitCmd(t, "pw\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home", "--path", "/data", "--backend", "file", "--password-stdin",
 	)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "access repository")
+	assert.Contains(t, err.Error(), "aborted")
 	require.Len(t, stub.calls, 1) // probe only; no `init`
+	assert.Contains(t, out, "Could not reach repository")
+
+	// Abort path leaves nothing behind: no config and no stored secret.
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr), "config must not be written on abort")
+
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+	_, getErr := store.Get(credentials.RepoPassword)
+	assert.ErrorIs(t, getErr, credentials.ErrNotFound, "no secret must be persisted on abort")
 }
 
 func TestInitPasswordStdinRequiresAPassword(t *testing.T) {

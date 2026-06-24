@@ -68,6 +68,34 @@ func (p *prompter) askDefault(label, def string) (string, error) {
 	return line, nil
 }
 
+// askYesNo prompts a yes/no question, showing the default in the [Y/n] / [y/N]
+// hint, and returns the answer. An empty line (or end of input) selects the
+// default, so the non-interactive path never blocks; an unrecognized answer
+// re-prompts.
+func (p *prompter) askYesNo(label string, def bool) (bool, error) {
+	hint := "y/N"
+	if def {
+		hint = "Y/n"
+	}
+	for {
+		p.printf("%s [%s]: ", label, hint)
+		line, err := p.readLine()
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(line) {
+		case "":
+			return def, nil
+		case "y", "yes":
+			return true, nil
+		case "n", "no":
+			return false, nil
+		default:
+			p.println(`Please answer "y" or "n".`)
+		}
+	}
+}
+
 // askList prompts for a comma-separated list and returns the non-empty,
 // trimmed elements, repeating until at least one is given.
 func (p *prompter) askList(label string) ([]string, error) {

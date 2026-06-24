@@ -1,0 +1,26 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - gosec
+    - unused
+  settings:
+    gosec:
+      excludes:
+        # exec.Command is core to wrapping the restic binary (FR-1); the
+        # subcommand/args are validated, not raw user shell input.
+        - G204
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/itspriddle/icebeam

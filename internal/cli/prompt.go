@@ -12,6 +12,13 @@ import (
 	"github.com/itspriddle/icebeam/internal/logging"
 )
 
+// errInputEnded reports that stdin reached end-of-input before a required prompt
+// received a value. The required-value prompts (ask, askList, askSecret) return
+// it instead of re-prompting, so an exhausted or incomplete stdin fails fast
+// rather than looping forever (which once exhausted memory until the machine
+// restarted).
+var errInputEnded = errors.New("end of input: no value provided")
+
 // prompter reads interactive answers from a reader and writes prompt text to a
 // writer. It is the seam between the init command and the terminal so the
 // non-interactive (flag-driven) path can be exercised without a TTY.
@@ -40,13 +47,17 @@ func (p *prompter) println(args ...any) {
 }
 
 // ask prints a prompt and returns the trimmed line the user enters, repeating
-// until a non-empty answer is given.
+// until a non-empty answer is given. It returns errInputEnded if stdin reaches
+// end-of-input before a value is entered, rather than re-prompting indefinitely.
 func (p *prompter) ask(label string) (string, error) {
 	for {
 		p.printf("%s: ", label)
-		line, err := p.readLine()
+		line, eof, err := p.readLine()
 		if err != nil {
 			return "", err
+		}
+		if eof {
+			return "", errInputEnded
 		}
 		if line != "" {
 			return line, nil
@@ -59,7 +70,7 @@ func (p *prompter) ask(label string) (string, error) {
 // the default when the user submits an empty line.
 func (p *prompter) askDefault(label, def string) (string, error) {
 	p.printf("%s [%s]: ", label, def)
-	line, err := p.readLine()
+	line, _, err := p.readLine()
 	if err != nil {
 		return "", err
 	}
@@ -75,11 +86,11 @@ func (p *prompter) askDefault(label, def string) (string, error) {
 func (p *prompter) askIntDefault(label string, def int) (int, error) {
 	for {
 		p.printf("%s [%d]: ", label, def)
-		line, err := p.readLine()
+		line, eof, err := p.readLine()
 		if err != nil {
 			return 0, err
 		}
-		if line == "" {
+		if eof || line == "" {
 			return def, nil
 		}
 		n, err := strconv.Atoi(line)
@@ -102,9 +113,12 @@ func (p *prompter) askYesNo(label string, def bool) (bool, error) {
 	}
 	for {
 		p.printf("%s [%s]: ", label, hint)
-		line, err := p.readLine()
+		line, eof, err := p.readLine()
 		if err != nil {
 			return false, err
+		}
+		if eof {
+			return def, nil
 		}
 		switch strings.ToLower(line) {
 		case "":
@@ -125,7 +139,8 @@ func (p *prompter) askYesNo(label string, def bool) (bool, error) {
 // HTTP auth.
 func (p *prompter) askOptional(label string) (string, error) {
 	p.printf("%s (optional, leave blank for none): ", label)
-	return p.readLine()
+	line, _, err := p.readLine()
+	return line, err
 }
 
 // askSecretOptional prompts for a secret without echoing it when the input is a
@@ -140,17 +155,23 @@ func (p *prompter) askSecretOptional(label string) (string, error) {
 		p.println() // ReadPassword swallows the newline the user typed.
 		return secret, err
 	}
-	return p.readLine()
+	line, _, err := p.readLine()
+	return line, err
 }
 
 // askList prompts for a comma-separated list and returns the non-empty,
-// trimmed elements, repeating until at least one is given.
+// trimmed elements, repeating until at least one is given. It returns
+// errInputEnded if stdin reaches end-of-input before a value is entered, rather
+// than re-prompting indefinitely.
 func (p *prompter) askList(label string) ([]string, error) {
 	for {
 		p.printf("%s: ", label)
-		line, err := p.readLine()
+		line, eof, err := p.readLine()
 		if err != nil {
 			return nil, err
+		}
+		if eof {
+			return nil, errInputEnded
 		}
 		items := splitList(line)
 		if len(items) > 0 {
@@ -166,7 +187,7 @@ func (p *prompter) askList(label string) ([]string, error) {
 // config without forcing the user to re-type unchanged paths.
 func (p *prompter) askListDefault(label string, def []string) ([]string, error) {
 	p.printf("%s [%s]: ", label, strings.Join(def, ", "))
-	line, err := p.readLine()
+	line, _, err := p.readLine()
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +200,9 @@ func (p *prompter) askListDefault(label string, def []string) ([]string, error) 
 
 // askSecret prompts for a secret without echoing it when the input is a
 // terminal, falling back to a plain line read otherwise. It repeats until a
-// non-empty value is entered.
+// non-empty value is entered. On the non-terminal (piped) path it returns
+// errInputEnded if stdin reaches end-of-input before a value is entered, rather
+// than re-prompting indefinitely.
 func (p *prompter) askSecret(label string) (string, error) {
 	for {
 		p.printf("%s: ", label)
@@ -192,7 +215,11 @@ func (p *prompter) askSecret(label string) (string, error) {
 			secret, err = readHiddenPassword(p.in)
 			p.println() // ReadPassword swallows the newline the user typed.
 		} else {
-			secret, err = p.readLine()
+			var eof bool
+			secret, eof, err = p.readLine()
+			if err == nil && eof {
+				return "", errInputEnded
+			}
 		}
 		if err != nil {
 			return "", err
@@ -216,7 +243,7 @@ func (p *prompter) askSecretKeep(label string) (secret string, kept bool, err er
 		secret, err = readHiddenPassword(p.in)
 		p.println() // ReadPassword swallows the newline the user typed.
 	} else {
-		secret, err = p.readLine()
+		secret, _, err = p.readLine()
 	}
 	if err != nil {
 		return "", false, err
@@ -240,14 +267,21 @@ func (p *prompter) readSecretLine(errCtx string) (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// readLine reads a single line, trims surrounding whitespace, and treats EOF as
-// the end of input (returning whatever was read so far).
-func (p *prompter) readLine() (string, error) {
-	line, err := p.r.ReadString('\n')
+// readLine reads a single line and trims surrounding whitespace. It reports
+// end-of-input distinctly via eof: eof is true only when EOF was reached with no
+// further content on this call (a final line lacking a trailing newline is
+// returned normally, with eof false; the following call then reports eof). This
+// lets the required-value prompts terminate on an exhausted stdin instead of
+// looping forever.
+func (p *prompter) readLine() (line string, eof bool, err error) {
+	raw, err := p.r.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("read input: %w", err)
+		return "", false, fmt.Errorf("read input: %w", err)
 	}
-	return strings.TrimSpace(line), nil
+	if errors.Is(err, io.EOF) && raw == "" {
+		return "", true, nil
+	}
+	return strings.TrimSpace(raw), false, nil
 }
 
 // splitList splits a comma-separated string into trimmed, non-empty parts.

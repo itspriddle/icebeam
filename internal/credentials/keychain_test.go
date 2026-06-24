@@ -99,7 +99,7 @@ func TestKeychainStoreSurfacesNonNotFoundErrors(t *testing.T) {
 
 	_, err := store.Get(RepoPassword)
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrNotFound, "a transport failure must not masquerade as ErrNotFound")
+	require.NotErrorIs(t, err, ErrNotFound, "a transport failure must not masquerade as ErrNotFound")
 
 	require.Error(t, store.Set(RepoPassword, "x"))
 

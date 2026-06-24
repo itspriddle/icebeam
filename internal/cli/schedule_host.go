@@ -21,11 +21,11 @@ const (
 // default. Unlike config.ConfigDir/StateDir it returns the *base* (e.g.
 // ~/.config), not icebeam's namespaced subdir, since that is what the scheduler
 // unit pins as $XDG_CONFIG_HOME/$XDG_STATE_HOME.
-func xdgBase(envVar, def string) (string, error) {
+func xdgBase(envVar, def string) string {
 	if base := os.Getenv(envVar); filepath.IsAbs(base) {
-		return base, nil
+		return base
 	}
-	return def, nil
+	return def
 }
 
 // resolveBinaryPath returns the absolute path to the running icebeam binary so
@@ -38,7 +38,7 @@ func resolveBinaryPath() (string, error) {
 	resolved, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		// Fall back to the unresolved path rather than failing the install.
-		return exe, nil
+		return exe, nil //nolint:nilerr // deliberate best-effort fallback
 	}
 	return resolved, nil
 }

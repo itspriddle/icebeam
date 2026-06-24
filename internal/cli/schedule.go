@@ -47,14 +47,8 @@ var newScheduleEnv = func() (*scheduleEnv, error) {
 		return nil, fmt.Errorf("resolve home directory: %w", err)
 	}
 
-	configHome, err := xdgBase("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	if err != nil {
-		return nil, err
-	}
-	stateHome, err := xdgBase("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-	if err != nil {
-		return nil, err
-	}
+	configHome := xdgBase("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	stateHome := xdgBase("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 
 	bin, err := resolveBinaryPath()
 	if err != nil {
@@ -222,13 +216,13 @@ func scheduleSpec(env *scheduleEnv, sched schedule.Schedule) schedule.Spec {
 
 // installLaunchd writes the LaunchAgent plist and loads it via launchctl. With
 // print it only emits the plist.
-func installLaunchd(cmd *cobra.Command, env *scheduleEnv, spec schedule.Spec, print bool) error {
+func installLaunchd(cmd *cobra.Command, env *scheduleEnv, spec schedule.Spec, printOnly bool) error {
 	plist, err := schedule.GenerateLaunchd(spec)
 	if err != nil {
 		return err
 	}
 
-	if print {
+	if printOnly {
 		writeLine(cmd.OutOrStdout(), plist)
 		return nil
 	}
@@ -258,14 +252,14 @@ func installLaunchd(cmd *cobra.Command, env *scheduleEnv, spec schedule.Spec, pr
 
 // installSystemd writes the service+timer units and enables the timer via
 // systemctl --user. With print it emits both units.
-func installSystemd(cmd *cobra.Command, env *scheduleEnv, spec schedule.Spec, print bool) error {
+func installSystemd(cmd *cobra.Command, env *scheduleEnv, spec schedule.Spec, printOnly bool) error {
 	service, timer, err := schedule.GenerateSystemd(spec)
 	if err != nil {
 		return err
 	}
 
 	out := cmd.OutOrStdout()
-	if print {
+	if printOnly {
 		writeLine(out, "# "+schedule.ServiceUnitName())
 		writeLine(out, service)
 		writeLine(out, "# "+schedule.TimerUnitName())

@@ -1,7 +1,6 @@
 package credentials
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -136,7 +135,7 @@ func TestSecretsNeverInCommandArgs(t *testing.T) {
 			// Each entry is a KEY=value env assignment, not an argv flag.
 			for _, e := range env {
 				assert.NotContains(t, e, "--password")
-				assert.True(t, strings.Contains(e, "="), "env entries must be KEY=value")
+				assert.Contains(t, e, "=", "env entries must be KEY=value")
 			}
 		})
 	}

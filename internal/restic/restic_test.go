@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +33,15 @@ func writeStub(t *testing.T, body string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "restic")
 	script := "#!/bin/sh\n" + body
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // test stub must be executable
+
+	// Hold ForkLock across the write so no sibling test's fork/exec runs while
+	// this executable's write fd is still open. Otherwise that child briefly
+	// inherits the write fd (golang.org/issue/22315) and a later exec of the
+	// stub fails with ETXTBSY ("text file busy") under parallel tests.
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(script), 0o755) //nolint:gosec // test stub must be executable
+	syscall.ForkLock.RUnlock()
+	require.NoError(t, err)
 
 	return path
 }
@@ -77,7 +86,7 @@ func TestNewMissingBinaryIsActionable(t *testing.T) {
 
 	_, err := New(&cfg, nil, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBinaryNotFound)
+	require.ErrorIs(t, err, ErrBinaryNotFound)
 	assert.Contains(t, err.Error(), "install restic")
 }
 
@@ -284,19 +293,24 @@ func TestRunMapsExitCodes(t *testing.T) {
 		assert func(t *testing.T, e *ExitError)
 	}{
 		{"locked", ExitRepoLocked, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsRepoLocked())
 			assert.False(t, e.IsWrongPassword())
 		}},
 		{"no-repo", ExitRepoNotExist, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsRepoNotExist())
 		}},
 		{"wrong-password", ExitWrongPassword, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsWrongPassword())
 		}},
 		{"incomplete-backup", ExitIncompleteBackup, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsIncompleteBackup())
 		}},
 		{"generic", ExitGeneric, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.False(t, e.IsRepoLocked())
 			assert.False(t, e.IsRepoNotExist())
 		}},

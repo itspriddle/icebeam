@@ -1,20 +1,72 @@
 version: "2"
 
 linters:
-  default: none
+  # Start from golangci-lint's standard set (errcheck, govet, ineffassign,
+  # staticcheck, unused) and add the linters below.
   enable:
-    - errcheck
-    - govet
-    - ineffassign
-    - staticcheck
-    - gosec
-    - unused
+    # Security
+    - gosec          # Security checker
+
+    # Error handling — icebeam wraps restic exit codes into typed errors
+    # (*ExitError, IsRepoLocked) inspected via errors.Is/As.
+    - errorlint      # Find code that breaks error wrapping (%w, ==, type asserts)
+    - nilerr         # Find code returning nil after checking err != nil
+    - errname        # Error type/var naming conventions
+
+    # Context — the Runner threads ctx for cancellation (FR-12).
+    # (contextcheck is intentionally omitted: it false-positives on cobra's
+    # cmd.Context() framework boundary, and can only be silenced at the root
+    # command constructor, which would mask future real findings. Context
+    # propagation here is enforced by convention — every restic Runner call
+    # takes cmd.Context() — the Runner's ctx-first API, and noctx below.)
+    - noctx          # Find requests/exec without context.Context
+    - durationcheck  # Catch two durations multiplied together
+
+    # Test discipline — testify suite with many helpers and t.Setenv.
+    - testifylint    # Enforce correct testify usage (assert/require, arg order)
+    - thelper        # Require t.Helper() in test helpers
+    - tparallel      # Catch misuse of t.Parallel()
+    - usetesting     # Prefer t.Context()/t.Setenv() over context/os equivalents
+
+    # HTTP body hygiene (harmless today; guards future REST/HTTP code).
+    - bodyclose      # Checks whether an HTTP response body is closed
+
+    # Code quality
+    - gocritic       # Opinionated correctness/style/perf diagnostics
+    - misspell       # Misspelled English words
+    - unconvert      # Unnecessary type conversions
+    - unparam        # Unused function parameters
+    - wastedassign   # Wasted assignments
+    - predeclared    # Shadowing of Go's predeclared identifiers
+    - cyclop         # Per-function cyclomatic complexity backstop
+
   settings:
+    cyclop:
+      # A backstop, not a style gate: trips only on egregiously complex
+      # functions, not normal command builders / wizards.
+      max-complexity: 30
+
     gosec:
       excludes:
         # exec.Command is core to wrapping the restic binary (FR-1); the
         # subcommand/args are validated, not raw user shell input.
         - G204
+
+    misspell:
+      locale: US
+
+  exclusions:
+    rules:
+      # In tests: gosec false-positives on stub scripts / fixtures (e.g. 0755
+      # shell stubs); cyclop is noisy on table-driven and dispatch tests;
+      # bodyclose findings are synthetic; unparam flags uniform helper
+      # signatures. errcheck stays on so unchecked errors there can't mask bugs.
+      - path: _test\.go
+        linters:
+          - gosec
+          - cyclop
+          - bodyclose
+          - unparam
 
 formatters:
   enable:
@@ -24,3 +76,9 @@ formatters:
     goimports:
       local-prefixes:
         - github.com/itspriddle/icebeam
+
+issues:
+  # Report every finding rather than capping duplicates, so a single noisy
+  # pattern can't hide other instances of the same issue.
+  max-issues-per-linter: 0
+  max-same-issues: 0

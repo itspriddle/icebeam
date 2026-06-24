@@ -88,9 +88,9 @@ func assertCancelled(t *testing.T, err error) {
 	t.Helper()
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled)
 	var exitErr *ExitError
-	assert.False(t, errors.As(err, &exitErr), "cancellation should not be reported as a restic exit error")
+	assert.NotErrorAs(t, err, &exitErr, "cancellation should not be reported as a restic exit error")
 }
 
 // runCancelTest drives one streaming entrypoint to cancellation: it starts the
@@ -113,7 +113,7 @@ func runCancelTest(t *testing.T, op func(ctx context.Context, r *Runner) error) 
 	go func() { done <- op(ctx, r) }()
 
 	// Start deterministically: wait until both the stub and its grandchild have
-	// published their pids before cancelling (no fixed sleep, no wall-clock race).
+	// published their pids before canceling (no fixed sleep, no wall-clock race).
 	stubPID := waitForPID(t, pidFile)
 	childPID := waitForPID(t, childFile)
 
@@ -123,7 +123,7 @@ func runCancelTest(t *testing.T, op func(ctx context.Context, r *Runner) error) 
 	case err := <-done:
 		assertCancelled(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("cancelled restic operation did not return promptly")
+		t.Fatal("canceled restic operation did not return promptly")
 	}
 
 	// The whole process group must be reaped: neither the direct child nor its

@@ -16,7 +16,7 @@ import (
 // Run executes a restic subcommand, streaming its combined output to the logger
 // line by line, and returns when the process exits. A non-zero exit is reported
 // as a *ExitError carrying the restic exit code (see exit code helpers such as
-// IsRepoLocked). Cancelling the context terminates restic and any child it
+// IsRepoLocked). Canceling the context terminates restic and any child it
 // spawned promptly, with no orphan, and unblocks the output reader (FR-12); the
 // resulting error wraps context.Canceled, distinguishable from a restic failure
 // with errors.Is.
@@ -98,7 +98,7 @@ func (r *Runner) captureJSON(ctx context.Context, args []string) ([]byte, error)
 // The child inherits the ambient environment (HOME, PATH, TMPDIR, cert/proxy
 // vars, …) with icebeam's RESTIC_* and credential overrides appended last so
 // they win — important so restic can find its cache, certs, and tempdir under a
-// scheduler (launchd/systemd). It is also configured so that cancelling ctx
+// scheduler (launchd/systemd). It is also configured so that canceling ctx
 // terminates restic and any descendant it spawned, leaving no orphan (FR-12);
 // see setProcessGroup.
 func (r *Runner) command(ctx context.Context, args []string) (*exec.Cmd, error) {
@@ -143,7 +143,7 @@ func (r *Runner) wait(ctx context.Context, cmd *exec.Cmd, args []string) error {
 	// WaitDelay reaps it (see setProcessGroup); the resulting Wait error is
 	// incidental, so report the cancellation instead.
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return fmt.Errorf("restic: %s cancelled: %w", commandName(args), ctxErr)
+		return fmt.Errorf("restic: %s canceled: %w", commandName(args), ctxErr)
 	}
 
 	var exitErr *exec.ExitError

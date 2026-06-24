@@ -102,6 +102,29 @@ paths = ["/Users/josh/Documents"]
 	assert.Equal(t, defaultLogLevel, cfg.Log.Level)
 }
 
+func TestLoadIgnoresLegacyCredentialsBackendKey(t *testing.T) {
+	// A config written before the file-only pivot may still carry a
+	// [credentials] backend key. It is now unknown and must be silently ignored
+	// on load, not rejected, so existing setups keep working.
+	path := filepath.Join(t.TempDir(), configFileName)
+	contents := `
+[repository]
+url = "rest:https://nas.local:8000/icebeam-test"
+
+[credentials]
+backend = "keychain"
+
+[[set]]
+name = "home"
+paths = ["/Users/josh/Documents"]
+`
+	require.NoError(t, os.WriteFile(path, []byte(contents), fileMode))
+
+	cfg, err := LoadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, "rest:https://nas.local:8000/icebeam-test", cfg.Repository.URL)
+}
+
 func TestDefaultPopulatesBaseValues(t *testing.T) {
 	t.Parallel()
 

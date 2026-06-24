@@ -70,13 +70,6 @@ func TestValidateRejects(t *testing.T) {
 			},
 			wantField: "set[1].name",
 		},
-		{
-			name: "invalid credentials backend",
-			mutate: func(c *Config) {
-				c.Credentials.Backend = "vault"
-			},
-			wantField: "credentials.backend",
-		},
 	}
 
 	for _, tt := range tests {
@@ -101,15 +94,5 @@ func TestValidateAcceptsSafeIdentifierVariants(t *testing.T) {
 		cfg := validConfig()
 		cfg.Sets[0].Name = name
 		assert.NoError(t, cfg.Validate(), "name %q should be valid", name)
-	}
-}
-
-func TestValidateAcceptsCredentialBackends(t *testing.T) {
-	t.Parallel()
-
-	for _, backend := range []string{"", "auto", "keychain", "file"} {
-		cfg := validConfig()
-		cfg.Credentials.Backend = backend
-		assert.NoError(t, cfg.Validate(), "backend %q should be valid", backend)
 	}
 }

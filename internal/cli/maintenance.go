@@ -154,7 +154,7 @@ func runMaintenance(cmd *cobra.Command, cfg *config.Config, logName string, args
 	}
 	defer func() { _ = logger.Close() }()
 
-	store, err := credentials.Open(cfg.Credentials.Backend, mustConfigDir())
+	store, err := credentials.Open(mustConfigDir())
 	if err != nil {
 		return err
 	}

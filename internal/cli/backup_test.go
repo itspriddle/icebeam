@@ -49,7 +49,6 @@ func writeBackupConfig(t *testing.T, sets ...config.Set) {
 
 	cfg := config.Default()
 	cfg.Repository.URL = "rest:https://nas.local:8000/icebeam"
-	cfg.Credentials.Backend = credentials.BackendFile
 	cfg.Backup.Exclude = []string{"**/.cache"}
 	cfg.Backup.ExcludeCaches = true
 	cfg.Backup.OneFileSystem = true

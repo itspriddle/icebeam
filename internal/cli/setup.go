@@ -22,9 +22,6 @@ type setupParams struct {
 	cfg *config.Config
 	// configPath is where cfg is written once the probe succeeds.
 	configPath string
-	// backend selects the credential store the secrets are persisted into
-	// (auto, keychain, or file).
-	backend string
 	// password is the repository password. The engine re-prompts it in place on
 	// a wrong-password probe outcome.
 	password string
@@ -169,18 +166,18 @@ func probeRepository(ctx context.Context, p *prompter, logger *logging.Logger, p
 	}
 }
 
-// persistSecrets opens the real credential store for the configured backend and
-// writes the verified repository password plus any REST-server credentials into
-// it. It is the persist step run only after a successful probe: the secrets move
-// from an in-memory store into the real backend via credentials.CopyInto, never
-// touching argv, config, or logs.
+// persistSecrets opens the persistent file store and writes the verified
+// repository password plus any REST-server credentials into it. It is the persist
+// step run only after a successful probe: the secrets move from an in-memory
+// store into the file store via credentials.CopyInto, never touching argv,
+// config, or logs.
 func persistSecrets(params *setupParams) (credentials.CredentialStore, error) {
 	configDir, err := config.ConfigDir()
 	if err != nil {
 		return nil, err
 	}
 
-	store, err := credentials.Open(params.backend, configDir)
+	store, err := credentials.Open(configDir)
 	if err != nil {
 		return nil, err
 	}

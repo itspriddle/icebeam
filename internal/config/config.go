@@ -25,14 +25,17 @@ const (
 var ErrNotConfigured = errors.New("icebeam is not configured; run `icebeam init`")
 
 // Config is the top-level icebeam configuration.
+//
+// Secrets are stored separately as 0600 files (see internal/credentials), not in
+// this config. A legacy [credentials] backend key from an older config is
+// silently ignored on load — the file store is now the only persistent backend.
 type Config struct {
-	Repository  Repository  `toml:"repository"`
-	Backup      Backup      `toml:"backup"`
-	Retention   Retention   `toml:"retention"`
-	Restic      Restic      `toml:"restic"`
-	Log         Log         `toml:"log"`
-	Credentials Credentials `toml:"credentials"`
-	Sets        []Set       `toml:"set"`
+	Repository Repository `toml:"repository"`
+	Backup     Backup     `toml:"backup"`
+	Retention  Retention  `toml:"retention"`
+	Restic     Restic     `toml:"restic"`
+	Log        Log        `toml:"log"`
+	Sets       []Set      `toml:"set"`
 }
 
 // Repository identifies the restic repository for this machine. One repo per
@@ -70,14 +73,6 @@ type Log struct {
 	File string `toml:"file"`
 	// Level is one of debug/info/warn/error.
 	Level string `toml:"level"`
-}
-
-// Credentials configures how icebeam stores secrets (the repository password and
-// optional REST-server credentials).
-type Credentials struct {
-	// Backend selects the credential store: "auto" (keychain when available,
-	// otherwise the file fallback), "keychain", or "file". Empty means "auto".
-	Backend string `toml:"backend"`
 }
 
 // Set is a named collection of paths to back up with its own excludes and tags.

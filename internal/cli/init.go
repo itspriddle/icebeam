@@ -43,7 +43,6 @@ type initOptions struct {
 	tags              []string
 	restUsername      string
 	restPassword      string
-	backend           string
 	keepDaily         int
 	keepWeekly        int
 	keepMonthly       int
@@ -86,7 +85,6 @@ func newInitCommand() *cobra.Command {
 	flags.StringArrayVar(&opts.excludes, "exclude", nil, "exclude pattern for the set (repeatable)")
 	flags.StringArrayVar(&opts.tags, "tag", nil, "tag to apply to the set (repeatable)")
 	flags.StringVar(&opts.restUsername, "rest-username", "", "REST-server HTTP username (optional)")
-	flags.StringVar(&opts.backend, "backend", "", "credential backend: auto, keychain, or file")
 	registerRetentionFlags(flags, opts)
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
@@ -128,11 +126,11 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 }
 
 // runSetupFlow is the shared body driven by both `init` and `reconfigure`. It
-// collects inputs (pre-filled from existing when supplied), resolves the
-// credential backend and stored secrets, then hands the result to the
-// validate-first setup engine, which probes the repository before persisting
-// anything. The two callers differ only in how existing is obtained: init treats
-// a missing config as a first run (existing nil), while reconfigure requires one.
+// collects inputs (pre-filled from existing when supplied), loads any stored
+// secrets, then hands the result to the validate-first setup engine, which
+// probes the repository before persisting anything. The two callers differ only
+// in how existing is obtained: init treats a missing config as a first run
+// (existing nil), while reconfigure requires one.
 func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config, configPath string) error {
 	if opts.passwordStdin && opts.restPasswordStdin {
 		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
@@ -152,10 +150,9 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 		return err
 	}
 
-	// Resolve the credential backend (flag overrides the loaded value) so any
-	// stored secrets can be loaded for "keep existing" defaults.
-	resolveBackend(opts, existing)
-	stored, err := loadStoredSecrets(opts.backend)
+	// Load any stored secrets from the file store so they can offer "keep
+	// existing" defaults on a re-run.
+	stored, err := loadStoredSecrets()
 	if err != nil {
 		return err
 	}
@@ -180,7 +177,6 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 	params := &setupParams{
 		cfg:          cfg,
 		configPath:   configPath,
-		backend:      opts.backend,
 		password:     password,
 		restUsername: opts.restUsername,
 		restPassword: opts.restPassword,
@@ -190,12 +186,11 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 		skipProbe: existing != nil && !passwordChanged && repoURLUnchanged(opts.repo, existing),
 	}
 
-	result, err := runSetup(cmd.Context(), p, logger, params)
-	if err != nil {
+	if _, err := runSetup(cmd.Context(), p, logger, params); err != nil {
 		return err
 	}
 
-	printSummary(p, cfg, result.store, configPath)
+	printSummary(p, cfg, configPath)
 	return nil
 }
 
@@ -213,15 +208,6 @@ func loadExistingConfig(path string) (*config.Config, error) {
 	return cfg, nil
 }
 
-// resolveBackend sets the credential backend from the existing config when no
-// flag overrides it, so stored secrets are loaded from the same backend they
-// were written to.
-func resolveBackend(opts *initOptions, existing *config.Config) {
-	if opts.backend == "" && existing != nil {
-		opts.backend = existing.Credentials.Backend
-	}
-}
-
 // storedSecrets holds the secrets already in the credential store, used to offer
 // "keep existing" defaults on a re-run. Each has*-flag is true only when that
 // secret is actually stored.
@@ -235,14 +221,14 @@ type storedSecrets struct {
 }
 
 // loadStoredSecrets reads any already-stored secrets so re-running setup can
-// offer to keep them. It opens the same backend the secrets were written to. A
-// missing secret is not an error (it simply has no "keep existing" default).
-func loadStoredSecrets(backend string) (*storedSecrets, error) {
+// offer to keep them. A missing secret is not an error (it simply has no "keep
+// existing" default).
+func loadStoredSecrets() (*storedSecrets, error) {
 	configDir, err := config.ConfigDir()
 	if err != nil {
 		return nil, err
 	}
-	store, err := credentials.Open(backend, configDir)
+	store, err := credentials.Open(configDir)
 	if err != nil {
 		return nil, err
 	}
@@ -537,7 +523,6 @@ func buildConfig(opts *initOptions, existing *config.Config) *config.Config {
 	}
 
 	cfg.Repository.URL = strings.TrimSpace(opts.repo)
-	cfg.Credentials.Backend = opts.backend
 	cfg.Retention = config.Retention{
 		KeepDaily:   opts.keepDaily,
 		KeepWeekly:  opts.keepWeekly,
@@ -591,12 +576,16 @@ func initRepository(ctx context.Context, p *prompter, logger *logging.Logger, cf
 	return nil
 }
 
-// printSummary reports the configured repository, credential backend, sets, log
-// location, and the suggested next step.
-func printSummary(p *prompter, cfg *config.Config, store credentials.CredentialStore, configPath string) {
+// printSummary reports the configured repository, secret-storage location, sets,
+// log location, and the suggested next step. Secrets are stored as 0600 files in
+// the config dir, so the credential-backend line is gone; the path tells the user
+// where their secrets live (the file-ownership security boundary).
+func printSummary(p *prompter, cfg *config.Config, configPath string) {
 	p.println("\nicebeam is configured.")
 	p.printf("  Repository:  %s\n", cfg.Repository.URL)
-	p.printf("  Credentials: %s backend\n", store.Backend())
+	if dir, err := config.ConfigDir(); err == nil {
+		p.printf("  Credentials: %s (0600 files)\n", dir)
+	}
 	p.printf("  Config:      %s\n", configPath)
 	for _, s := range cfg.Sets {
 		p.printf("  Set %q:    %s\n", s.Name, strings.Join(s.Paths, ", "))

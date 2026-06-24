@@ -64,7 +64,6 @@ func writeBrowseConfig(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Repository.URL = "rest:https://nas.local:8000/icebeam"
-	cfg.Credentials.Backend = credentials.BackendFile
 	cfg.Sets = []config.Set{{Name: "home", Paths: []string{"/home"}}}
 
 	path, err := config.ConfigPath()

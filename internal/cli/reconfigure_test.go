@@ -37,7 +37,7 @@ func TestReconfigureErrorsWhenUnconfigured(t *testing.T) {
 
 	out, err := runReconfigureCmd(t, "",
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 	)
 	require.ErrorIs(t, err, config.ErrNotConfigured)
 
@@ -86,7 +86,7 @@ func TestReconfigureEditsAValueOnConfiguredMachine(t *testing.T) {
 	assert.Equal(t, []string{"home"}, cfg.Sets[0].Tags)
 
 	// The stored repository password is left intact.
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	got, err := store.Get(credentials.RepoPassword)
 	require.NoError(t, err)

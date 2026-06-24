@@ -60,7 +60,7 @@ func newRunner(t *testing.T, binary string, mutate func(*config.Config)) *Runner
 		mutate(&cfg)
 	}
 
-	store, err := credentials.Open(credentials.BackendFile, t.TempDir())
+	store, err := credentials.Open(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, store.Set(credentials.RepoPassword, "s3cr3t"))
 
@@ -102,7 +102,7 @@ func TestNewFindsBinaryOnPath(t *testing.T) {
 	cfg.Repository.URL = "rest:http://nas.local:8000/icebeam"
 	cfg.Restic.Binary = ""
 
-	store, err := credentials.Open(credentials.BackendFile, t.TempDir())
+	store, err := credentials.Open(t.TempDir())
 	require.NoError(t, err)
 
 	r, err := New(&cfg, store, nil)
@@ -149,7 +149,7 @@ func TestRunSurfacesRESTServerCredentialsInEnv(t *testing.T) {
 	stub := writeStub(t, "env | grep -E '^RESTIC_REST_' > "+envFile+"\nexit 0\n")
 
 	fileDir := t.TempDir()
-	store, err := credentials.Open(credentials.BackendFile, fileDir)
+	store, err := credentials.Open(fileDir)
 	require.NoError(t, err)
 	require.NoError(t, store.Set(credentials.RepoPassword, "s3cr3t"))
 	require.NoError(t, store.Set(credentials.RESTUsername, "nasuser"))
@@ -200,7 +200,7 @@ func TestRunStreamsCombinedOutputToLogger(t *testing.T) {
 	cfg.Restic.Binary = stub
 	cfg.Restic.MinVersion = ""
 
-	store, err := credentials.Open(credentials.BackendFile, t.TempDir())
+	store, err := credentials.Open(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, store.Set(credentials.RepoPassword, "s3cr3t"))
 

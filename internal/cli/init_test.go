@@ -100,7 +100,6 @@ func TestInitNonInteractiveInitializesAbsentRepo(t *testing.T) {
 		"--path", "/Users/josh/Projects",
 		"--exclude", "**/node_modules",
 		"--tag", "home",
-		"--backend", "file",
 		"--password-stdin",
 	)
 	require.NoError(t, err)
@@ -116,7 +115,6 @@ func TestInitNonInteractiveInitializesAbsentRepo(t *testing.T) {
 	cfg, err := config.LoadFile(cfgPath)
 	require.NoError(t, err)
 	assert.Equal(t, "rest:https://nas.local:8000/icebeam", cfg.Repository.URL)
-	assert.Equal(t, "file", cfg.Credentials.Backend)
 	require.Len(t, cfg.Sets, 1)
 	assert.Equal(t, "home", cfg.Sets[0].Name)
 	assert.Equal(t, []string{"/Users/josh/Documents", "/Users/josh/Projects"}, cfg.Sets[0].Paths)
@@ -124,7 +122,7 @@ func TestInitNonInteractiveInitializesAbsentRepo(t *testing.T) {
 	assert.Equal(t, []string{"home"}, cfg.Sets[0].Tags)
 
 	// Secret was stored via the file backend and never appears in any restic argv.
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	got, err := store.Get(credentials.RepoPassword)
 	require.NoError(t, err)
@@ -151,7 +149,6 @@ func TestInitLogsStartAndEndThroughTheLogger(t *testing.T) {
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home",
 		"--path", "/data",
-		"--backend", "file",
 		"--password-stdin",
 	)
 	require.NoError(t, err)
@@ -180,7 +177,6 @@ func TestInitVerifiesExistingRepoWithoutClobbering(t *testing.T) {
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home",
 		"--path", "/data",
-		"--backend", "file",
 		"--password-stdin",
 	)
 	require.NoError(t, err)
@@ -204,7 +200,6 @@ func TestInitStoresRESTCredentials(t *testing.T) {
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home",
 		"--path", "/data",
-		"--backend", "file",
 		"--rest-username", "alice",
 		"--rest-password-stdin",
 	)
@@ -212,7 +207,7 @@ func TestInitStoresRESTCredentials(t *testing.T) {
 
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 
 	user, err := store.Get(credentials.RESTUsername)
@@ -249,7 +244,7 @@ func TestInitPromptsForRESTCredentialsOnRESTRepo(t *testing.T) {
 
 	out, err := runInitCmd(t, stdin,
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 	)
 	require.NoError(t, err)
 
@@ -258,7 +253,7 @@ func TestInitPromptsForRESTCredentialsOnRESTRepo(t *testing.T) {
 
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 
 	user, err := store.Get(credentials.RESTUsername)
@@ -284,7 +279,7 @@ func TestInitSkipsRESTPromptsForNonRESTRepo(t *testing.T) {
 	}, "\n") + "\n"
 	out, err := runInitCmd(t, stdin,
 		"--repo", "sftp:user@host:/srv/backup",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 	)
 	require.NoError(t, err)
 
@@ -293,7 +288,7 @@ func TestInitSkipsRESTPromptsForNonRESTRepo(t *testing.T) {
 
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 
 	// No REST credentials were stored for a non-REST repository.
@@ -320,13 +315,13 @@ func TestInitAllowsEmptyRESTCredentials(t *testing.T) {
 
 	_, err := runInitCmd(t, stdin,
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 	)
 	require.NoError(t, err)
 
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 
 	_, err = store.Get(credentials.RESTUsername)
@@ -343,7 +338,7 @@ func TestInitRejectsBothStdinSecretFlags(t *testing.T) {
 
 	out, err := runInitCmd(t, "pw\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 		"--password-stdin", "--rest-password-stdin",
 	)
 	require.Error(t, err)
@@ -366,7 +361,7 @@ func seedExistingConfig(t *testing.T, stub *stubRunner) string {
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home", "--path", "/data",
 		"--exclude", "**/node_modules", "--tag", "home",
-		"--backend", "file", "--password-stdin",
+		"--password-stdin",
 	)
 	require.NoError(t, err)
 	cfgPath, err := config.ConfigPath()
@@ -433,7 +428,7 @@ func TestInitRerunKeepsExistingSecretAndSkipsProbe(t *testing.T) {
 	assert.Len(t, stub.calls, probesAfterSeed)
 
 	// The stored password is intact.
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	got, err := store.Get(credentials.RepoPassword)
 	require.NoError(t, err)
@@ -532,7 +527,7 @@ func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 
 	out, err := runInitCmd(t, stdin,
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file",
+		"--set", "home", "--path", "/data",
 	)
 	require.NoError(t, err)
 
@@ -546,7 +541,7 @@ func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 	// The corrected password (not the rejected one) is what got persisted.
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	got, err := store.Get(credentials.RepoPassword)
 	require.NoError(t, err)
@@ -568,7 +563,7 @@ func TestInitGenericProbeFailureAbortsWithoutPersisting(t *testing.T) {
 
 	out, err := runInitCmd(t, "pw\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file", "--password-stdin",
+		"--set", "home", "--path", "/data", "--password-stdin",
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "aborted")
@@ -581,7 +576,7 @@ func TestInitGenericProbeFailureAbortsWithoutPersisting(t *testing.T) {
 	_, statErr := os.Stat(cfgPath)
 	assert.True(t, os.IsNotExist(statErr), "config must not be written on abort")
 
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	_, getErr := store.Get(credentials.RepoPassword)
 	assert.ErrorIs(t, getErr, credentials.ErrNotFound, "no secret must be persisted on abort")
@@ -595,7 +590,7 @@ func TestInitPasswordStdinRequiresAPassword(t *testing.T) {
 
 	_, err := runInitCmd(t, "\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home", "--path", "/data", "--backend", "file", "--password-stdin",
+		"--set", "home", "--path", "/data", "--password-stdin",
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no password")
@@ -620,7 +615,7 @@ func TestInitInteractivePromptsForMissingValues(t *testing.T) {
 		"swordfish",
 	}, "\n") + "\n"
 
-	out, err := runInitCmd(t, stdin, "--backend", "file")
+	out, err := runInitCmd(t, stdin)
 	require.NoError(t, err)
 
 	cfgPath, err := config.ConfigPath()
@@ -632,7 +627,7 @@ func TestInitInteractivePromptsForMissingValues(t *testing.T) {
 	assert.Equal(t, "laptop", cfg.Sets[0].Name)
 	assert.Equal(t, []string{"/home/me", "/etc"}, cfg.Sets[0].Paths)
 
-	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	store, err := credentials.Open(dirOf(t, cfgPath))
 	require.NoError(t, err)
 	got, err := store.Get(credentials.RepoPassword)
 	require.NoError(t, err)

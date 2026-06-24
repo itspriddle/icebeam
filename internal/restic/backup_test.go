@@ -24,7 +24,7 @@ func newRunnerWithLogger(t *testing.T, binary string, logger *logging.Logger) *R
 	cfg.Restic.Binary = binary
 	cfg.Restic.MinVersion = ""
 
-	store, err := credentials.Open(credentials.BackendFile, t.TempDir())
+	store, err := credentials.Open(t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, store.Set(credentials.RepoPassword, "s3cr3t"))
 

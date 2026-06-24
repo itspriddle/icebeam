@@ -82,7 +82,7 @@ func runBackup(cmd *cobra.Command, names []string) error {
 	}
 	defer func() { _ = logger.Close() }()
 
-	store, err := credentials.Open(cfg.Credentials.Backend, mustConfigDir())
+	store, err := credentials.Open(mustConfigDir())
 	if err != nil {
 		return err
 	}

@@ -78,7 +78,7 @@ func TestLoadMalformedIsDistinctFromNotConfigured(t *testing.T) {
 
 	_, err := LoadFile(path)
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, ErrNotConfigured)
+	require.NotErrorIs(t, err, ErrNotConfigured)
 	assert.Contains(t, err.Error(), "parse config")
 }
 

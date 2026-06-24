@@ -343,7 +343,7 @@ func TestBrowseNotConfigured(t *testing.T) {
 
 	_, err := runCLI(t, "snapshots")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, config.ErrNotConfigured)
+	require.ErrorIs(t, err, config.ErrNotConfigured)
 	assert.Empty(t, stub.calls)
 }
 

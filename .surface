@@ -1,0 +1,53 @@
+ARG icebeam backup 0 set optional-variadic
+ARG icebeam dump 0 snapshotID required
+ARG icebeam dump 1 path required
+ARG icebeam find 0 pattern required
+ARG icebeam ls 0 snapshotID required
+ARG icebeam ls 1 path optional
+ARG icebeam restore 0 snapshotID required
+CMD icebeam
+CMD icebeam backup
+CMD icebeam check
+CMD icebeam dump
+CMD icebeam find
+CMD icebeam forget
+CMD icebeam init
+CMD icebeam ls
+CMD icebeam prune
+CMD icebeam restore
+CMD icebeam run
+CMD icebeam schedule
+CMD icebeam schedule install
+CMD icebeam schedule status
+CMD icebeam schedule uninstall
+CMD icebeam snapshots
+FLAG icebeam check --read-data-subset type=string
+FLAG icebeam find --host type=string
+FLAG icebeam find --json type=bool
+FLAG icebeam find --tag type=stringArray
+FLAG icebeam forget --dry-run type=bool
+FLAG icebeam forget --no-prune type=bool
+FLAG icebeam forget --prune type=bool
+FLAG icebeam init --backend type=string
+FLAG icebeam init --exclude type=stringArray
+FLAG icebeam init --force type=bool
+FLAG icebeam init --password-stdin type=bool
+FLAG icebeam init --path type=stringArray
+FLAG icebeam init --repo type=string
+FLAG icebeam init --rest-password type=string
+FLAG icebeam init --rest-username type=string
+FLAG icebeam init --set type=string
+FLAG icebeam init --tag type=stringArray
+FLAG icebeam ls --host type=string
+FLAG icebeam ls --json type=bool
+FLAG icebeam ls --tag type=stringArray
+FLAG icebeam restore --exclude type=stringArray
+FLAG icebeam restore --force type=bool
+FLAG icebeam restore --include type=stringArray
+FLAG icebeam restore --target type=string
+FLAG icebeam schedule install --calendar type=string
+FLAG icebeam schedule install --interval type=string
+FLAG icebeam schedule install --print type=bool
+FLAG icebeam snapshots --host type=string
+FLAG icebeam snapshots --json type=bool
+FLAG icebeam snapshots --tag type=stringArray

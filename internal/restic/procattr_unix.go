@@ -8,13 +8,13 @@ import (
 	"time"
 )
 
-// waitDelay bounds how long Wait blocks after the context is cancelled before
+// waitDelay bounds how long Wait blocks after the context is canceled before
 // the child's I/O pipes are force-closed. It exists so the output reader
 // (which reads to EOF before Wait) unblocks promptly even if a restic
 // descendant keeps the pipe's write-end open after the direct child is killed.
 const waitDelay = 2 * time.Second
 
-// setProcessGroup configures cmd so that cancelling its context terminates the
+// setProcessGroup configures cmd so that canceling its context terminates the
 // restic process and every descendant it spawned, leaving no orphan.
 //
 // exec.CommandContext's default cancellation only SIGKILLs the direct child, so

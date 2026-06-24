@@ -12,10 +12,16 @@ import (
 )
 
 func main() {
-	// A cancellable context lets restic invocations (added in later stories) be
-	// terminated cleanly on SIGINT/SIGTERM rather than orphaning the child.
+	os.Exit(run())
+}
+
+// run wraps the command execution so the deferred signal stop runs before the
+// process exits (os.Exit would otherwise skip deferred calls).
+func run() int {
+	// A cancellable context lets restic invocations be terminated cleanly on
+	// SIGINT/SIGTERM rather than orphaning the child.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	os.Exit(cli.Execute(ctx))
+	return cli.Execute(ctx)
 }

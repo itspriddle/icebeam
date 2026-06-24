@@ -42,9 +42,7 @@ func newBackupCommand() *cobra.Command {
 			"options, and its tags. Every set is attempted even if an earlier one " +
 			"fails; the exit code distinguishes success, partial failure, and total " +
 			"failure.",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runBackup(cmd, args)
-		},
+		RunE: runBackup,
 	}
 }
 

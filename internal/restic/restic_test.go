@@ -77,7 +77,7 @@ func TestNewMissingBinaryIsActionable(t *testing.T) {
 
 	_, err := New(&cfg, nil, nil)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrBinaryNotFound)
+	require.ErrorIs(t, err, ErrBinaryNotFound)
 	assert.Contains(t, err.Error(), "install restic")
 }
 
@@ -284,19 +284,24 @@ func TestRunMapsExitCodes(t *testing.T) {
 		assert func(t *testing.T, e *ExitError)
 	}{
 		{"locked", ExitRepoLocked, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsRepoLocked())
 			assert.False(t, e.IsWrongPassword())
 		}},
 		{"no-repo", ExitRepoNotExist, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsRepoNotExist())
 		}},
 		{"wrong-password", ExitWrongPassword, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsWrongPassword())
 		}},
 		{"incomplete-backup", ExitIncompleteBackup, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.True(t, e.IsIncompleteBackup())
 		}},
 		{"generic", ExitGeneric, func(t *testing.T, e *ExitError) {
+			t.Helper()
 			assert.False(t, e.IsRepoLocked())
 			assert.False(t, e.IsRepoNotExist())
 		}},

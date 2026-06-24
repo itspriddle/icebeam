@@ -5,7 +5,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -212,7 +211,7 @@ func TestRestoreNotConfigured(t *testing.T) {
 
 	_, err := runCLI(t, "restore", "latest", "--target", target)
 	require.Error(t, err)
-	assert.ErrorIs(t, err, config.ErrNotConfigured)
+	require.ErrorIs(t, err, config.ErrNotConfigured)
 	assert.Empty(t, stub.calls)
 }
 
@@ -232,7 +231,7 @@ func TestDumpStreamsToStdout(t *testing.T) {
 	require.Len(t, stub.calls, 1)
 	assert.Equal(t, []string{"dump", "latest", "/etc/hosts"}, stub.calls[0])
 	// runCLI captures stdout via the command writer; the raw bytes are present.
-	assert.True(t, strings.Contains(out, "hi"))
+	assert.Contains(t, out, "hi")
 	assert.Equal(t, string(content), out)
 }
 
@@ -273,6 +272,6 @@ func TestDumpNotConfigured(t *testing.T) {
 
 	_, err := runCLI(t, "dump", "latest", "/etc/hosts")
 	require.Error(t, err)
-	assert.ErrorIs(t, err, config.ErrNotConfigured)
+	require.ErrorIs(t, err, config.ErrNotConfigured)
 	assert.Empty(t, stub.calls)
 }

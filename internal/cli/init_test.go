@@ -352,6 +352,130 @@ func TestInitRejectsBothStdinSecretFlags(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "config must not be written when both stdin flags are passed")
 }
 
+func TestInitStripsEmbeddedRESTCredentialsFromRepoURL(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}} // existing repo verified
+	withStubRunner(t, stub)
+
+	// A repo URL with embedded HTTP credentials. They must be stripped from the
+	// stored URL and moved to the credential store; the repository password is
+	// read from stdin.
+	out, err := runInitCmd(t, "pw\n",
+		"--repo", "rest:https://alice:rsecret@nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data",
+		"--password-stdin",
+	)
+	require.NoError(t, err)
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+
+	// The persisted URL carries no userinfo.
+	assert.Equal(t, "rest:https://nas.local:8000/icebeam", cfg.Repository.URL)
+	assert.NotContains(t, cfg.Repository.URL, "alice")
+	assert.NotContains(t, cfg.Repository.URL, "rsecret")
+
+	// The embedded credentials were moved into the credential store.
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	user, err := store.Get(credentials.RESTUsername)
+	require.NoError(t, err)
+	assert.Equal(t, "alice", user)
+	pass, err := store.Get(credentials.RESTPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "rsecret", pass)
+
+	// The probe ran with the embedded credentials (no separate probe failure), and
+	// no secret reached restic's argv.
+	for _, call := range stub.calls {
+		joined := strings.Join(call, " ")
+		assert.NotContains(t, joined, "rsecret")
+		assert.NotContains(t, joined, "alice")
+	}
+
+	// A warning was shown, but it leaks no secret; the summary prints only the
+	// stripped URL.
+	assert.Contains(t, out, "credentials")
+	assert.NotContains(t, out, "rsecret")
+	assert.NotContains(t, out, "alice:rsecret")
+
+	// The raw config file on disk never contains the secret.
+	raw, err := os.ReadFile(cfgPath) //nolint:gosec // config path derived from isolated XDG dir, not arbitrary input
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "rsecret")
+	assert.NotContains(t, string(raw), "alice")
+}
+
+func TestInitFlagRESTUsernameWinsOverURLEmbedded(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	// An explicit --rest-username takes precedence over the URL-embedded username;
+	// the URL-embedded password is still used since none was supplied otherwise.
+	_, err := runInitCmd(t, "pw\n",
+		"--repo", "rest:https://alice:rsecret@nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data",
+		"--rest-username", "bob",
+		"--password-stdin",
+	)
+	require.NoError(t, err)
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+
+	user, err := store.Get(credentials.RESTUsername)
+	require.NoError(t, err)
+	assert.Equal(t, "bob", user, "explicit --rest-username must win over URL-embedded one")
+	pass, err := store.Get(credentials.RESTPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "rsecret", pass)
+}
+
+func TestInitPlainRESTURLIsUnaffected(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	// A plain rest: URL with no embedded credentials: the URL is stored verbatim,
+	// no REST credentials are stored, and no relocation warning is shown.
+	stdin := strings.Join([]string{
+		"", "", "", "", // retention → defaults
+		"",   // REST username (blank → none)
+		"",   // REST password (blank → none)
+		"pw", // repository password
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin,
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data",
+	)
+	require.NoError(t, err)
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "rest:https://nas.local:8000/icebeam", cfg.Repository.URL)
+
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	_, err = store.Get(credentials.RESTUsername)
+	require.ErrorIs(t, err, credentials.ErrNotFound)
+	_, err = store.Get(credentials.RESTPassword)
+	require.ErrorIs(t, err, credentials.ErrNotFound)
+
+	// No relocation warning for a URL that carried no credentials.
+	assert.NotContains(t, out, "moved to the credential store")
+}
+
 // seedExistingConfig runs init once to leave a complete config and stored
 // secrets on the isolated XDG dir, returning the config path so a re-run test can
 // assert against the pre-filled defaults.

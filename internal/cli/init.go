@@ -152,6 +152,15 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 		return err
 	}
 
+	// Strip any HTTP credentials embedded in a rest:https://user:pass@host/... URL
+	// before anything is persisted: the normalized (userinfo-stripped) URL goes to
+	// config.toml, and the embedded credentials are folded into the REST username/
+	// password so they seed the probe and are stored in the credential store like
+	// prompted ones. A secret-bearing URL must never reach config, logs, or stdout.
+	if err := normalizeRepoURL(cmd, p, opts); err != nil {
+		return err
+	}
+
 	if err := collectRetention(p, cmd, opts, existing); err != nil {
 		return err
 	}
@@ -325,6 +334,51 @@ func collectInputs(p *prompter, opts *initOptions, existing *config.Config) erro
 		}
 	}
 
+	return nil
+}
+
+// normalizeRepoURL parses the collected repository URL, replaces opts.repo with
+// the normalized form (any embedded HTTP userinfo stripped), and folds embedded
+// REST credentials into opts so they seed the probe and are persisted like
+// prompted ones. It runs after the repo URL is collected and before REST
+// credentials, retention, the probe, and any persistence — so a credential
+// embedded in the URL participates in the connection test and never reaches
+// config.toml, logs, or stdout.
+//
+// An explicitly supplied REST credential takes precedence over the URL-embedded
+// one: a --rest-username flag (even empty) is left untouched, and a
+// --rest-password-stdin value (read later) wins because it overwrites
+// opts.restPassword after this point. When credentials are moved out of the URL
+// a one-line, secret-free warning is printed.
+func normalizeRepoURL(cmd *cobra.Command, p *prompter, opts *initOptions) error {
+	parsed, err := config.ParseRepoURL(opts.repo)
+	if err != nil {
+		return err
+	}
+
+	// Store only the userinfo-stripped URL; a credential-bearing URL must never
+	// reach config.toml or the summary.
+	opts.repo = parsed.URL
+
+	if !parsed.HasRESTCredentials() {
+		return nil
+	}
+
+	// Fold the embedded username into opts unless --rest-username was explicitly
+	// supplied (an explicit flag, even empty, wins over the URL).
+	if !cmd.Flags().Changed("rest-username") && opts.restUsername == "" {
+		opts.restUsername = parsed.RESTUsername
+	}
+
+	// The embedded password seeds opts.restPassword. A later --rest-password-stdin
+	// read overwrites it, so a piped secret still takes precedence; otherwise this
+	// value suppresses the interactive REST-password prompt and is used as-is.
+	if !opts.restPasswordStdin && opts.restPassword == "" {
+		opts.restPassword = parsed.RESTPassword
+	}
+
+	// The warning carries no secret value — only that credentials were relocated.
+	p.println("Note: HTTP credentials were found in the repository URL; they have been moved to the credential store and stripped from the saved URL.")
 	return nil
 }
 

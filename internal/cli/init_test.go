@@ -636,6 +636,122 @@ func TestInitInteractivePromptsForMissingValues(t *testing.T) {
 	assert.Contains(t, out, "Repository URL")
 }
 
+func TestInitGeneratePasswordFlagNonInteractive(t *testing.T) {
+	isolateXDG(t)
+
+	// A deterministic all-zero reader makes generatePassword yield a known value:
+	// generatedPasswordLength repetitions of the first charset character.
+	withRandReader(t, bytes.NewReader(make([]byte, generatedPasswordLength)))
+	wantPW := strings.Repeat(string(passwordCharset[0]), generatedPasswordLength)
+
+	stub := &stubRunner{
+		results: map[string]error{
+			"cat": &restic.ExitError{Code: restic.ExitRepoNotExist, Command: "cat"},
+		},
+	}
+	withStubRunner(t, stub)
+
+	// Fully non-interactive: every value via flags (a non-REST repo so no REST
+	// prompts), the four retention flags so nothing prompts, and --generate-password
+	// to create the repository password. No stdin is consumed.
+	out, err := runInitCmd(t, "",
+		"--repo", "sftp:user@host:/srv/backup",
+		"--set", "home", "--path", "/data",
+		"--keep-daily", "7", "--keep-weekly", "4",
+		"--keep-monthly", "12", "--keep-yearly", "3",
+		"--generate-password",
+	)
+	require.NoError(t, err)
+
+	// The probe then init ran; the generated password is what got stored.
+	require.Len(t, stub.calls, 2)
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[0])
+	assert.Equal(t, []string{"init"}, stub.calls[1])
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	got, err := store.Get(credentials.RepoPassword)
+	require.NoError(t, err)
+	assert.Equal(t, wantPW, got)
+
+	// The generated password was shown exactly once with the unrecoverable warning,
+	// and never appears on a restic argv.
+	assert.Contains(t, out, wantPW)
+	assert.Equal(t, 1, strings.Count(out, wantPW), "generated password must be displayed exactly once")
+	assert.Contains(t, out, "NOT recoverable")
+	assert.Contains(t, out, "SAVE IT NOW")
+	for _, call := range stub.calls {
+		assert.NotContains(t, strings.Join(call, " "), wantPW)
+	}
+
+	// The generated password is never written to config.toml.
+	data, err := os.ReadFile(cfgPath) //nolint:gosec // path derived from isolated XDG dir
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), wantPW)
+}
+
+func TestInitGeneratePasswordInteractiveBlankAnswer(t *testing.T) {
+	isolateXDG(t)
+
+	withRandReader(t, bytes.NewReader(make([]byte, generatedPasswordLength)))
+	wantPW := strings.Repeat(string(passwordCharset[0]), generatedPasswordLength)
+
+	stub := &stubRunner{results: map[string]error{}} // existing repo verified
+	withStubRunner(t, stub)
+
+	// Non-TTY stdin for a non-REST repo: the four retention prompts kept at
+	// defaults, then the repository password answered BLANK, which selects
+	// generation.
+	stdin := strings.Join([]string{
+		"", "", "", "", // retention → defaults
+		"", // repository password → blank → generate
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin,
+		"--repo", "sftp:user@host:/srv/backup",
+		"--set", "home", "--path", "/data",
+	)
+	require.NoError(t, err)
+
+	// The blank answer generated and stored a password (not an empty one).
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(dirOf(t, cfgPath))
+	require.NoError(t, err)
+	got, err := store.Get(credentials.RepoPassword)
+	require.NoError(t, err)
+	assert.Equal(t, wantPW, got)
+	assert.NotEmpty(t, got)
+
+	assert.Contains(t, out, "leave blank to generate")
+	assert.Contains(t, out, wantPW)
+	assert.Contains(t, out, "NOT recoverable")
+}
+
+func TestInitGeneratePasswordRejectedWithStdinFlag(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	out, err := runInitCmd(t, "pw\n",
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data",
+		"--generate-password", "--password-stdin",
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "mutually exclusive")
+	assert.NotContains(t, out, "icebeam run")
+
+	// Nothing was written: the check runs before any persist.
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr), "config must not be written when both flags are passed")
+}
+
 // dirOf returns the directory containing path; the file credential backend
 // writes its secret files there.
 func dirOf(t *testing.T, path string) string {

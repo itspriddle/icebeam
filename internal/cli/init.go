@@ -49,6 +49,7 @@ type initOptions struct {
 	keepYearly        int
 	passwordStdin     bool
 	restPasswordStdin bool
+	generatePassword  bool
 }
 
 // newInitCommand builds the `icebeam init` command: a guided setup that writes
@@ -88,6 +89,7 @@ func newInitCommand() *cobra.Command {
 	registerRetentionFlags(flags, opts)
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
+	flags.BoolVar(&opts.generatePassword, "generate-password", false, "generate a strong repository password instead of prompting (shown once, cannot be recovered)")
 
 	return cmd
 }
@@ -134,6 +136,10 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config, configPath string) error {
 	if opts.passwordStdin && opts.restPasswordStdin {
 		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
+	}
+
+	if opts.generatePassword && opts.passwordStdin {
+		return errors.New("--generate-password and --password-stdin are mutually exclusive: generate a password or supply one, not both")
 	}
 
 	p := newPrompter(cmd.InOrStdin(), cmd.OutOrStdout())
@@ -472,11 +478,13 @@ func collectRESTCredentials(p *prompter, opts *initOptions, stored *storedSecret
 
 // collectPassword resolves the repository password and reports whether it
 // changed from the stored value. It reads from stdin when --password-stdin is
-// set, otherwise from a hidden interactive prompt. On a re-run with a stored
-// password the prompt offers a "keep existing" default; keeping it returns the
-// stored value with changed=false so the setup engine can skip re-verification.
-// The stdin read goes through the prompter's shared reader so a preceding piped
-// secret does not strand buffered input.
+// set, generates one when --generate-password is set (or when the interactive
+// prompt is answered blank on a fresh setup), and otherwise reads from a hidden
+// interactive prompt. On a re-run with a stored password the prompt offers a
+// "keep existing" default; keeping it returns the stored value with changed=false
+// so the setup engine can skip re-verification. The stdin read goes through the
+// prompter's shared reader so a preceding piped secret does not strand buffered
+// input.
 func collectPassword(p *prompter, opts *initOptions, stored *storedSecrets) (password string, changed bool, err error) {
 	if opts.passwordStdin {
 		password, err = p.readSecretLine("read password from stdin")
@@ -489,10 +497,20 @@ func collectPassword(p *prompter, opts *initOptions, stored *storedSecrets) (pas
 		return password, password != stored.repoPassword, nil
 	}
 
+	// --generate-password selects generation non-interactively, regardless of
+	// whether a password is already stored (it replaces it).
+	if opts.generatePassword {
+		generated, genErr := generateAndShowPassword(p)
+		if genErr != nil {
+			return "", false, genErr
+		}
+		return generated, generated != stored.repoPassword, nil
+	}
+
 	if stored.hasRepo {
-		entered, kept, err := p.askSecretKeep("Repository password")
-		if err != nil {
-			return "", false, err
+		entered, kept, keepErr := p.askSecretKeep("Repository password")
+		if keepErr != nil {
+			return "", false, keepErr
 		}
 		if kept {
 			return stored.repoPassword, false, nil
@@ -500,11 +518,37 @@ func collectPassword(p *prompter, opts *initOptions, stored *storedSecrets) (pas
 		return entered, entered != stored.repoPassword, nil
 	}
 
-	password, err = p.askSecret("Repository password")
+	// Fresh setup: offer generation when the prompt is answered blank, so a user
+	// who does not want to invent a strong password can have icebeam create one.
+	entered, generate, err := p.askSecretOrGenerate()
 	if err != nil {
 		return "", false, err
 	}
-	return password, true, nil
+	if generate {
+		generated, genErr := generateAndShowPassword(p)
+		if genErr != nil {
+			return "", false, genErr
+		}
+		return generated, true, nil
+	}
+	return entered, true, nil
+}
+
+// generateAndShowPassword generates a strong repository password and displays it
+// to the user exactly once with a prominent unrecoverable-loss warning. The value
+// is written only to the prompter's output (stdout) for the user to save — it is
+// never routed through the logger, so the redaction in internal/logging is not
+// bypassed (nothing is logged to bypass). It is still stored in the credential
+// store by the caller like any entered password.
+func generateAndShowPassword(p *prompter) (string, error) {
+	generated, err := generatePassword()
+	if err != nil {
+		return "", err
+	}
+	p.println("\n!! A strong repository password was generated. SAVE IT NOW.")
+	p.println("!! It is NOT recoverable: if you lose it, your backups cannot be decrypted.")
+	p.printf("\n    %s\n\n", generated)
+	return generated, nil
 }
 
 // buildConfig assembles a Config from the collected options. On a re-run it

@@ -231,6 +231,31 @@ func (p *prompter) askSecret(label string) (string, error) {
 	}
 }
 
+// askSecretOrGenerate prompts for the repository password when none is stored
+// yet, offering generation: an empty answer means "generate one for me"
+// (generate=true, secret=""), and any entered value is used as-is
+// (generate=false). It is used on a fresh setup so a user who does not want to
+// invent a strong password can have icebeam generate one. The secret is never
+// echoed on a terminal.
+func (p *prompter) askSecretOrGenerate() (secret string, generate bool, err error) {
+	p.printf("Repository password [leave blank to generate a strong one]: ")
+
+	var eof bool
+	if isTerminal(p.in) {
+		secret, err = readHiddenPassword(p.in)
+		p.println() // ReadPassword swallows the newline the user typed.
+	} else {
+		secret, eof, err = p.readLine()
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if secret == "" || eof {
+		return "", true, nil
+	}
+	return secret, false, nil
+}
+
 // askSecretKeep prompts for a secret when one is already stored, offering a
 // "keep existing" default: an empty answer keeps the current value (kept=true,
 // secret=""), and any entered value replaces it (kept=false). It is used when

@@ -43,6 +43,7 @@ func newReconfigureCommand() *cobra.Command {
 	registerRetentionFlags(flags, opts)
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
+	flags.BoolVar(&opts.generatePassword, "generate-password", false, "generate a strong repository password instead of prompting (shown once, cannot be recovered)")
 
 	return cmd
 }

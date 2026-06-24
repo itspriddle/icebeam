@@ -143,6 +143,40 @@ func TestDefaultPromptsReturnDefaultOnEndOfInput(t *testing.T) {
 	})
 }
 
+// TestAskSecretOrGenerateOffersGeneration pins the fresh-setup password prompt:
+// a blank answer (or exhausted stdin) selects generation, and any entered value
+// is used as-is. It never loops, so an exhausted stdin can never spin.
+func TestAskSecretOrGenerateOffersGeneration(t *testing.T) {
+	t.Parallel()
+
+	t.Run("blank answer selects generation", func(t *testing.T) {
+		t.Parallel()
+
+		secret, generate, err := newTestPrompter("\n").askSecretOrGenerate()
+		require.NoError(t, err)
+		assert.True(t, generate)
+		assert.Empty(t, secret)
+	})
+
+	t.Run("exhausted stdin selects generation", func(t *testing.T) {
+		t.Parallel()
+
+		secret, generate, err := newTestPrompter("").askSecretOrGenerate()
+		require.NoError(t, err)
+		assert.True(t, generate)
+		assert.Empty(t, secret)
+	})
+
+	t.Run("entered value is used as-is", func(t *testing.T) {
+		t.Parallel()
+
+		secret, generate, err := newTestPrompter("hunter2\n").askSecretOrGenerate()
+		require.NoError(t, err)
+		assert.False(t, generate)
+		assert.Equal(t, "hunter2", secret)
+	})
+}
+
 // TestReadLineReportsEndOfInput covers readLine's distinct eof signal, including
 // the edge case of a final line with no trailing newline (returned normally,
 // eof on the following read).

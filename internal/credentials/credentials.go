@@ -48,6 +48,10 @@ const (
 	BackendAuto     = "auto"
 	BackendKeychain = "keychain"
 	BackendFile     = "file"
+	// BackendMemory is the in-memory store used during setup to verify a
+	// repository connection before any secret is persisted. It is never a valid
+	// config credentials.backend selection.
+	BackendMemory = "memory"
 )
 
 // keyringProvider abstracts the OS secret service so the keychain backend can be

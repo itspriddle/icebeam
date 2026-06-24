@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
 	"github.com/itspriddle/icebeam/internal/config"
@@ -43,6 +44,10 @@ type initOptions struct {
 	restUsername      string
 	restPassword      string
 	backend           string
+	keepDaily         int
+	keepWeekly        int
+	keepMonthly       int
+	keepYearly        int
 	passwordStdin     bool
 	restPasswordStdin bool
 }
@@ -82,10 +87,22 @@ func newInitCommand() *cobra.Command {
 	flags.StringArrayVar(&opts.tags, "tag", nil, "tag to apply to the set (repeatable)")
 	flags.StringVar(&opts.restUsername, "rest-username", "", "REST-server HTTP username (optional)")
 	flags.StringVar(&opts.backend, "backend", "", "credential backend: auto, keychain, or file")
+	registerRetentionFlags(flags, opts)
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
 
 	return cmd
+}
+
+// registerRetentionFlags registers the snapshot-retention flags shared by init
+// and reconfigure. Their defaults match config.Default* so a fully-scripted run
+// that omits them still establishes a sensible policy. A negative value is
+// rejected later by config.Validate with a field-named error.
+func registerRetentionFlags(flags *pflag.FlagSet, opts *initOptions) {
+	flags.IntVar(&opts.keepDaily, "keep-daily", config.DefaultKeepDaily, "snapshots to keep, one per day")
+	flags.IntVar(&opts.keepWeekly, "keep-weekly", config.DefaultKeepWeekly, "snapshots to keep, one per week")
+	flags.IntVar(&opts.keepMonthly, "keep-monthly", config.DefaultKeepMonthly, "snapshots to keep, one per month")
+	flags.IntVar(&opts.keepYearly, "keep-yearly", config.DefaultKeepYearly, "snapshots to keep, one per year")
 }
 
 // runInit executes the init flow. It is re-runnable: when a config already
@@ -128,6 +145,10 @@ func runSetupFlow(cmd *cobra.Command, opts *initOptions, existing *config.Config
 	}
 
 	if err := collectInputs(p, opts, existing); err != nil {
+		return err
+	}
+
+	if err := collectRetention(p, cmd, opts, existing); err != nil {
 		return err
 	}
 
@@ -315,6 +336,68 @@ func collectInputs(p *prompter, opts *initOptions, existing *config.Config) erro
 	return nil
 }
 
+// collectRetention prompts for the snapshot-retention policy (keep
+// daily/weekly/monthly/yearly) so a freshly set-up machine has a meaningful
+// `icebeam forget` policy without hand-editing config.toml. Each prompt
+// pre-fills with the default policy on a first run, or the existing value on a
+// re-run. A flag-supplied value suppresses its prompt, preserving the scriptable
+// path; negative values are rejected later by config.Validate with a field-named
+// error.
+func collectRetention(p *prompter, cmd *cobra.Command, opts *initOptions, existing *config.Config) error {
+	flags := cmd.Flags()
+
+	// When a secret is piped (--password-stdin or --rest-password-stdin), stdin is
+	// reserved for that one secret and the invocation is scripted, so the
+	// retention prompts are suppressed — a flag-supplied value wins, otherwise the
+	// existing policy (re-run) or the default policy is used unchanged.
+	scripted := opts.passwordStdin || opts.restPasswordStdin
+
+	for _, r := range []struct {
+		flag  string
+		value *int
+		label string
+	}{
+		{"keep-daily", &opts.keepDaily, "Keep daily snapshots"},
+		{"keep-weekly", &opts.keepWeekly, "Keep weekly snapshots"},
+		{"keep-monthly", &opts.keepMonthly, "Keep monthly snapshots"},
+		{"keep-yearly", &opts.keepYearly, "Keep yearly snapshots"},
+	} {
+		// The flag default already populated *r.value with the policy default; on a
+		// re-run, fall back to the existing value when the flag was not supplied.
+		def := *r.value
+		if !flags.Changed(r.flag) && existing != nil {
+			def = retentionField(existing, r.flag)
+		}
+		if flags.Changed(r.flag) || scripted {
+			*r.value = def // flag-supplied value or scripted default; no prompt.
+			continue
+		}
+		n, err := p.askIntDefault(r.label, def)
+		if err != nil {
+			return err
+		}
+		*r.value = n
+	}
+	return nil
+}
+
+// retentionField returns the existing config's value for the named keep-* flag,
+// used to pre-fill the retention prompts on a re-run.
+func retentionField(existing *config.Config, flag string) int {
+	switch flag {
+	case "keep-daily":
+		return existing.Retention.KeepDaily
+	case "keep-weekly":
+		return existing.Retention.KeepWeekly
+	case "keep-monthly":
+		return existing.Retention.KeepMonthly
+	case "keep-yearly":
+		return existing.Retention.KeepYearly
+	default:
+		return 0
+	}
+}
+
 // firstSet returns the first backup set of the existing config, or nil when
 // there is no existing config or it has no sets.
 func firstSet(existing *config.Config) *config.Set {
@@ -440,10 +523,11 @@ func collectPassword(p *prompter, opts *initOptions, stored *storedSecrets) (pas
 
 // buildConfig assembles a Config from the collected options. On a re-run it
 // starts from the existing config so values that have neither a flag nor a prompt
-// (excludes, tags, retention, and the rest of the config) are carried forward
-// rather than reset; flag-supplied excludes/tags override the loaded set. On a
-// first run it starts from the defaults so min_version and log level are
-// populated.
+// (the rest of the config) are carried forward rather than reset; flag-supplied
+// excludes/tags override the loaded set. The retention policy is always set from
+// the collected (prompted or flagged) values, which pre-fill from the existing
+// policy on a re-run. On a first run it starts from the defaults so min_version
+// and log level are populated.
 func buildConfig(opts *initOptions, existing *config.Config) *config.Config {
 	var cfg config.Config
 	if existing != nil {
@@ -454,6 +538,12 @@ func buildConfig(opts *initOptions, existing *config.Config) *config.Config {
 
 	cfg.Repository.URL = strings.TrimSpace(opts.repo)
 	cfg.Credentials.Backend = opts.backend
+	cfg.Retention = config.Retention{
+		KeepDaily:   opts.keepDaily,
+		KeepWeekly:  opts.keepWeekly,
+		KeepMonthly: opts.keepMonthly,
+		KeepYearly:  opts.keepYearly,
+	}
 
 	set := config.Set{
 		Name:  strings.TrimSpace(opts.setName),

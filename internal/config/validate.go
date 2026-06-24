@@ -26,6 +26,20 @@ func (c *Config) Validate() error {
 		)
 	}
 
+	for _, r := range []struct {
+		field string
+		value int
+	}{
+		{"retention.keep_daily", c.Retention.KeepDaily},
+		{"retention.keep_weekly", c.Retention.KeepWeekly},
+		{"retention.keep_monthly", c.Retention.KeepMonthly},
+		{"retention.keep_yearly", c.Retention.KeepYearly},
+	} {
+		if r.value < 0 {
+			return fmt.Errorf("%s: must not be negative (got %d)", r.field, r.value)
+		}
+	}
+
 	if len(c.Sets) == 0 {
 		return fmt.Errorf("set: at least one backup set must be defined")
 	}

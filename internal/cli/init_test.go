@@ -236,10 +236,12 @@ func TestInitPromptsForRESTCredentialsOnRESTRepo(t *testing.T) {
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
 
-	// Non-TTY stdin: REST username (visible/optional), REST password (hidden/
+	// Non-TTY stdin: the four retention prompts (kept at their defaults with empty
+	// lines), then REST username (visible/optional), REST password (hidden/
 	// optional, read as a plain line off-TTY), then the repository password — in
 	// prompt order.
 	stdin := strings.Join([]string{
+		"", "", "", "", // retention (keep daily/weekly/monthly/yearly) → defaults
 		"alice",   // REST username
 		"rsecret", // REST password
 		"pw",      // repository password
@@ -273,9 +275,14 @@ func TestInitSkipsRESTPromptsForNonRESTRepo(t *testing.T) {
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
 
-	// A non-REST (sftp) repository: only the repository password is prompted; the
-	// REST username/password prompts never appear.
-	out, err := runInitCmd(t, "pw\n",
+	// A non-REST (sftp) repository: the four retention prompts (kept at defaults
+	// with blank lines) then the repository password are prompted; the REST
+	// username/password prompts never appear.
+	stdin := strings.Join([]string{
+		"", "", "", "", // retention → defaults
+		"pw", // repository password
+	}, "\n") + "\n"
+	out, err := runInitCmd(t, stdin,
 		"--repo", "sftp:user@host:/srv/backup",
 		"--set", "home", "--path", "/data", "--backend", "file",
 	)
@@ -305,6 +312,7 @@ func TestInitAllowsEmptyRESTCredentials(t *testing.T) {
 	// A REST server with no HTTP auth: blank username and blank password are
 	// accepted, and nothing is stored for them.
 	stdin := strings.Join([]string{
+		"", "", "", "", // retention → defaults
 		"",   // REST username (blank → none)
 		"",   // REST password (blank → none)
 		"pw", // repository password
@@ -375,15 +383,16 @@ func TestInitRerunPreFillsFromExistingConfig(t *testing.T) {
 	cfgPath := seedExistingConfig(t, stub)
 
 	// Re-run interactively, accepting every pre-filled default with empty input
-	// (repo URL, set name, paths, REST username, REST password, repo password),
-	// but changing the set name to "laptop".
+	// (repo URL, set name, paths, retention, REST username, REST password, repo
+	// password), but changing the set name to "laptop".
 	stdin := strings.Join([]string{
-		"",       // repo URL → keep
-		"laptop", // set name → change
-		"",       // paths → keep
-		"",       // REST username → keep (none stored → blank)
-		"",       // REST password → keep (none stored → blank)
-		"",       // repo password → keep existing
+		"",             // repo URL → keep
+		"laptop",       // set name → change
+		"",             // paths → keep
+		"", "", "", "", // retention → keep existing (defaults)
+		"", // REST username → keep (none stored → blank)
+		"", // REST password → keep (none stored → blank)
+		"", // repo password → keep existing
 	}, "\n") + "\n"
 
 	out, err := runInitCmd(t, stdin)
@@ -412,8 +421,10 @@ func TestInitRerunKeepsExistingSecretAndSkipsProbe(t *testing.T) {
 
 	// Re-run accepting all defaults including "keep existing" for the password.
 	// With the repo URL and password unchanged, the engine skips re-verification:
-	// no further probe runs.
-	stdin := strings.Join([]string{"", "", "", "", "", ""}, "\n") + "\n"
+	// no further probe runs. The lines are repo URL, set name, paths, the four
+	// retention prompts, REST username, REST password, and the repo password — all
+	// kept with empty input.
+	stdin := strings.Join([]string{"", "", "", "", "", "", "", "", "", ""}, "\n") + "\n"
 	out, err := runInitCmd(t, stdin)
 	require.NoError(t, err)
 	assert.Contains(t, out, "skipping re-verification")
@@ -445,9 +456,10 @@ func TestInitRerunChangedRepoURLReVerifies(t *testing.T) {
 		"rest:https://nas.local:8000/moved", // repo URL → change
 		"",                                  // set name → keep
 		"",                                  // paths → keep
-		"",                                  // REST username → keep
-		"",                                  // REST password → keep
-		"",                                  // repo password → keep existing
+		"", "", "", "",                      // retention → keep existing
+		"", // REST username → keep
+		"", // REST password → keep
+		"", // repo password → keep existing
 	}, "\n") + "\n"
 
 	out, err := runInitCmd(t, stdin)
@@ -511,6 +523,7 @@ func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 	// re-prompt. Use the non-stdin path so the re-prompt reads from stdin as a
 	// plain line.
 	stdin := strings.Join([]string{
+		"", "", "", "", // retention → defaults
 		"",         // REST username (blank → none)
 		"",         // REST password (blank → none)
 		"badpass",  // initial repository password prompt
@@ -594,13 +607,14 @@ func TestInitInteractivePromptsForMissingValues(t *testing.T) {
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
 
-	// Non-TTY stdin: repo, set name, paths, the (blank) REST username/password
-	// for the REST repo, then the repository password are read as plain lines in
-	// prompt order.
+	// Non-TTY stdin: repo, set name, paths, the four retention prompts (kept at
+	// defaults), the (blank) REST username/password for the REST repo, then the
+	// repository password are read as plain lines in prompt order.
 	stdin := strings.Join([]string{
 		"rest:https://nas.local:8000/icebeam",
 		"laptop",
 		"/home/me, /etc",
+		"", "", "", "", // retention → defaults
 		"", // REST username (blank → none)
 		"", // REST password (blank → none)
 		"swordfish",

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/itspriddle/icebeam/internal/config"
@@ -66,6 +67,28 @@ func (p *prompter) askDefault(label, def string) (string, error) {
 		return def, nil
 	}
 	return line, nil
+}
+
+// askIntDefault prompts for a non-negative integer, showing the default, and
+// returns the entered value or the default when the user submits an empty line.
+// A non-numeric or negative answer re-prompts rather than aborting setup.
+func (p *prompter) askIntDefault(label string, def int) (int, error) {
+	for {
+		p.printf("%s [%d]: ", label, def)
+		line, err := p.readLine()
+		if err != nil {
+			return 0, err
+		}
+		if line == "" {
+			return def, nil
+		}
+		n, err := strconv.Atoi(line)
+		if err != nil || n < 0 {
+			p.println("Please enter a non-negative whole number.")
+			continue
+		}
+		return n, nil
+	}
 }
 
 // askYesNo prompts a yes/no question, showing the default in the [Y/n] / [y/N]

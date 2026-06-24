@@ -62,12 +62,13 @@ func TestReconfigureEditsAValueOnConfiguredMachine(t *testing.T) {
 	// Reconfigure interactively, accepting every pre-filled default with empty
 	// input except the set name, which is changed to "laptop".
 	stdin := strings.Join([]string{
-		"",       // repo URL → keep
-		"laptop", // set name → change
-		"",       // paths → keep
-		"",       // REST username → keep (none stored → blank)
-		"",       // REST password → keep (none stored → blank)
-		"",       // repo password → keep existing
+		"",             // repo URL → keep
+		"laptop",       // set name → change
+		"",             // paths → keep
+		"", "", "", "", // retention → keep existing
+		"", // REST username → keep (none stored → blank)
+		"", // REST password → keep (none stored → blank)
+		"", // repo password → keep existing
 	}, "\n") + "\n"
 
 	out, err := runReconfigureCmd(t, stdin)

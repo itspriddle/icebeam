@@ -97,6 +97,14 @@ const (
 	// predicates would silently degrade below this floor.
 	defaultMinVersion = "0.17.0"
 	defaultLogLevel   = "info"
+
+	// Default retention policy established during setup so `icebeam forget` is
+	// meaningful immediately. A fresh repository keeps the most recent backups at
+	// progressively coarser granularity.
+	DefaultKeepDaily   = 7
+	DefaultKeepWeekly  = 4
+	DefaultKeepMonthly = 12
+	DefaultKeepYearly  = 3
 )
 
 // Default returns a Config populated with icebeam's default values. The

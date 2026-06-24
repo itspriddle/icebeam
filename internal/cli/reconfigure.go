@@ -41,6 +41,7 @@ func newReconfigureCommand() *cobra.Command {
 	flags.StringArrayVar(&opts.tags, "tag", nil, "tag to apply to the set (repeatable)")
 	flags.StringVar(&opts.restUsername, "rest-username", "", "REST-server HTTP username (optional)")
 	flags.StringVar(&opts.backend, "backend", "", "credential backend: auto, keychain, or file")
+	registerRetentionFlags(flags, opts)
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
 

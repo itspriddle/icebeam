@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,7 +33,15 @@ func writeStub(t *testing.T, body string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "restic")
 	script := "#!/bin/sh\n" + body
-	require.NoError(t, os.WriteFile(path, []byte(script), 0o755)) //nolint:gosec // test stub must be executable
+
+	// Hold ForkLock across the write so no sibling test's fork/exec runs while
+	// this executable's write fd is still open. Otherwise that child briefly
+	// inherits the write fd (golang.org/issue/22315) and a later exec of the
+	// stub fails with ETXTBSY ("text file busy") under parallel tests.
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(path, []byte(script), 0o755) //nolint:gosec // test stub must be executable
+	syscall.ForkLock.RUnlock()
+	require.NoError(t, err)
 
 	return path
 }

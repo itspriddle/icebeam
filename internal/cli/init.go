@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -36,16 +35,17 @@ var newResticRunner = func(cfg *config.Config, store credentials.CredentialStore
 // initOptions collects the values that drive `icebeam init`, populated from
 // flags and/or interactive prompts.
 type initOptions struct {
-	repo          string
-	setName       string
-	paths         []string
-	excludes      []string
-	tags          []string
-	restUsername  string
-	restPassword  string
-	backend       string
-	passwordStdin bool
-	force         bool
+	repo              string
+	setName           string
+	paths             []string
+	excludes          []string
+	tags              []string
+	restUsername      string
+	restPassword      string
+	backend           string
+	passwordStdin     bool
+	restPasswordStdin bool
+	force             bool
 }
 
 // newInitCommand builds the `icebeam init` command: a guided setup that writes
@@ -61,7 +61,10 @@ func newInitCommand() *cobra.Command {
 			"REST-server credentials, and a first backup set, then writes config.toml, " +
 			"stores secrets in the credential store, and runs `restic init` if the " +
 			"repository does not yet exist. All prompts have flag equivalents so init " +
-			"can be scripted; with --password-stdin the password is read from stdin.",
+			"can be scripted. Secrets are never accepted on argv: a single secret may " +
+			"be read from stdin per run via --password-stdin (repository password) or " +
+			"--rest-password-stdin (REST-server password); the two are mutually " +
+			"exclusive.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInit(cmd, opts)
@@ -75,9 +78,9 @@ func newInitCommand() *cobra.Command {
 	flags.StringArrayVar(&opts.excludes, "exclude", nil, "exclude pattern for the set (repeatable)")
 	flags.StringArrayVar(&opts.tags, "tag", nil, "tag to apply to the set (repeatable)")
 	flags.StringVar(&opts.restUsername, "rest-username", "", "REST-server HTTP username (optional)")
-	flags.StringVar(&opts.restPassword, "rest-password", "", "REST-server HTTP password (optional)")
 	flags.StringVar(&opts.backend, "backend", "", "credential backend: auto, keychain, or file")
-	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo)")
+	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
+	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
 	flags.BoolVar(&opts.force, "force", false, "overwrite an existing config")
 
 	return cmd
@@ -96,13 +99,21 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 		return err
 	}
 
+	if opts.passwordStdin && opts.restPasswordStdin {
+		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
+	}
+
 	p := newPrompter(cmd.InOrStdin(), cmd.OutOrStdout())
 
 	if err := collectInputs(p, opts); err != nil {
 		return err
 	}
 
-	password, err := collectPassword(cmd, p, opts)
+	if err := collectRESTCredentials(p, opts); err != nil {
+		return err
+	}
+
+	password, err := collectPassword(p, opts)
 	if err != nil {
 		return err
 	}
@@ -177,11 +188,75 @@ func collectInputs(p *prompter, opts *initOptions) error {
 	return nil
 }
 
+// collectRESTCredentials prompts for the REST-server HTTP username and password
+// when the repository is a REST endpoint, so a server behind HTTP basic auth can
+// be reached without leaking the password on argv. Both are optional (a REST
+// server may have no HTTP auth). For a non-REST repository it is a no-op so those
+// prompts never appear.
+//
+// The username is non-secret (visible prompt); the password is hidden, or read
+// from stdin when --rest-password-stdin is set. Flag-supplied values suppress
+// their prompt, preserving the scriptable path. The collected secret reaches
+// restic only via the environment (RESTIC_REST_USERNAME/PASSWORD), never argv.
+func collectRESTCredentials(p *prompter, opts *initOptions) error {
+	repoURL, err := config.ParseRepoURL(opts.repo)
+	if err != nil {
+		return err
+	}
+	if !repoURL.IsRESTEndpoint() {
+		return nil
+	}
+
+	// When a secret is being piped (--password-stdin or --rest-password-stdin),
+	// stdin is reserved for that one secret and the invocation is scripted, so the
+	// interactive REST prompts are suppressed — REST credentials then come solely
+	// from --rest-username and --rest-password-stdin.
+	scripted := opts.passwordStdin || opts.restPasswordStdin
+
+	if opts.restUsername == "" && !scripted {
+		username, err := p.askOptional("REST-server username")
+		if err != nil {
+			return err
+		}
+		opts.restUsername = username
+	}
+
+	if opts.restPasswordStdin {
+		// REST password may be empty (server with no HTTP auth), so an empty stdin
+		// line is accepted here.
+		password, err := p.readSecretLine("read REST password from stdin")
+		if err != nil {
+			return err
+		}
+		opts.restPassword = password
+		return nil
+	}
+
+	if opts.restPassword == "" && !scripted {
+		password, err := p.askSecretOptional("REST-server password")
+		if err != nil {
+			return err
+		}
+		opts.restPassword = password
+	}
+
+	return nil
+}
+
 // collectPassword resolves the repository password: from stdin when
-// --password-stdin is set, otherwise via a hidden interactive prompt.
-func collectPassword(cmd *cobra.Command, p *prompter, opts *initOptions) (string, error) {
+// --password-stdin is set, otherwise via a hidden interactive prompt. The stdin
+// read goes through the prompter's shared reader so a preceding piped secret does
+// not strand buffered input.
+func collectPassword(p *prompter, opts *initOptions) (string, error) {
 	if opts.passwordStdin {
-		return readPasswordStdin(cmd.InOrStdin())
+		password, err := p.readSecretLine("read password from stdin")
+		if err != nil {
+			return "", err
+		}
+		if password == "" {
+			return "", errors.New("no password provided on stdin")
+		}
+		return password, nil
 	}
 	return p.askSecret("Repository password")
 }
@@ -241,21 +316,6 @@ func printSummary(p *prompter, cfg *config.Config, store credentials.CredentialS
 		p.printf("  Log:         %s\n", logPath)
 	}
 	p.println("\nNext: run `icebeam run` to back up now, or `icebeam schedule install` to back up on a schedule.")
-}
-
-// readPasswordStdin reads a single password line from stdin without echoing
-// (stdin is already not a terminal when piped). A trailing newline is trimmed.
-func readPasswordStdin(in io.Reader) (string, error) {
-	r := bufio.NewReader(in)
-	line, err := r.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", fmt.Errorf("read password from stdin: %w", err)
-	}
-	password := strings.TrimRight(line, "\r\n")
-	if password == "" {
-		return "", errors.New("no password provided on stdin")
-	}
-	return password, nil
 }
 
 // isTerminal reports whether the reader is an interactive terminal, used to

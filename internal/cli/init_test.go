@@ -197,14 +197,16 @@ func TestInitStoresRESTCredentials(t *testing.T) {
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
 
-	_, err := runInitCmd(t, "pw\n",
+	// --rest-username supplies the (non-secret) username; --rest-password-stdin
+	// reads the REST password from stdin first, then the repository password is
+	// read as the next stdin line (no --password-stdin, the two are exclusive).
+	_, err := runInitCmd(t, "rsecret\npw\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
 		"--set", "home",
 		"--path", "/data",
 		"--backend", "file",
 		"--rest-username", "alice",
-		"--rest-password", "rsecret",
-		"--password-stdin",
+		"--rest-password-stdin",
 	)
 	require.NoError(t, err)
 
@@ -219,6 +221,132 @@ func TestInitStoresRESTCredentials(t *testing.T) {
 	pass, err := store.Get(credentials.RESTPassword)
 	require.NoError(t, err)
 	assert.Equal(t, "rsecret", pass)
+
+	// Neither secret ever appears in a restic argv.
+	for _, call := range stub.calls {
+		joined := strings.Join(call, " ")
+		assert.NotContains(t, joined, "rsecret")
+		assert.NotContains(t, joined, "pw")
+	}
+}
+
+func TestInitPromptsForRESTCredentialsOnRESTRepo(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	// Non-TTY stdin: REST username (visible/optional), REST password (hidden/
+	// optional, read as a plain line off-TTY), then the repository password — in
+	// prompt order.
+	stdin := strings.Join([]string{
+		"alice",   // REST username
+		"rsecret", // REST password
+		"pw",      // repository password
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin,
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data", "--backend", "file",
+	)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "REST-server username")
+	assert.Contains(t, out, "REST-server password")
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+
+	user, err := store.Get(credentials.RESTUsername)
+	require.NoError(t, err)
+	assert.Equal(t, "alice", user)
+	pass, err := store.Get(credentials.RESTPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "rsecret", pass)
+}
+
+func TestInitSkipsRESTPromptsForNonRESTRepo(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	// A non-REST (sftp) repository: only the repository password is prompted; the
+	// REST username/password prompts never appear.
+	out, err := runInitCmd(t, "pw\n",
+		"--repo", "sftp:user@host:/srv/backup",
+		"--set", "home", "--path", "/data", "--backend", "file",
+	)
+	require.NoError(t, err)
+
+	assert.NotContains(t, out, "REST-server username")
+	assert.NotContains(t, out, "REST-server password")
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+
+	// No REST credentials were stored for a non-REST repository.
+	_, err = store.Get(credentials.RESTUsername)
+	require.ErrorIs(t, err, credentials.ErrNotFound)
+	_, err = store.Get(credentials.RESTPassword)
+	assert.ErrorIs(t, err, credentials.ErrNotFound)
+}
+
+func TestInitAllowsEmptyRESTCredentials(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	// A REST server with no HTTP auth: blank username and blank password are
+	// accepted, and nothing is stored for them.
+	stdin := strings.Join([]string{
+		"",   // REST username (blank → none)
+		"",   // REST password (blank → none)
+		"pw", // repository password
+	}, "\n") + "\n"
+
+	_, err := runInitCmd(t, stdin,
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data", "--backend", "file",
+	)
+	require.NoError(t, err)
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+
+	_, err = store.Get(credentials.RESTUsername)
+	require.ErrorIs(t, err, credentials.ErrNotFound)
+	_, err = store.Get(credentials.RESTPassword)
+	assert.ErrorIs(t, err, credentials.ErrNotFound)
+}
+
+func TestInitRejectsBothStdinSecretFlags(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+
+	out, err := runInitCmd(t, "pw\n",
+		"--repo", "rest:https://nas.local:8000/icebeam",
+		"--set", "home", "--path", "/data", "--backend", "file",
+		"--password-stdin", "--rest-password-stdin",
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "only one secret")
+	assert.NotContains(t, out, "icebeam run")
+
+	// Nothing was written: the mutual-exclusion check runs before any persist.
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr), "config must not be written when both stdin flags are passed")
 }
 
 func TestInitRefusesToClobberExistingConfig(t *testing.T) {
@@ -286,10 +414,13 @@ func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {
 	}
 	withStubRunner(t, stub)
 
-	// The interactive stdin supplies the (wrong) password via --password-stdin,
-	// then a corrected password at the re-prompt. Use the non-stdin path so the
-	// re-prompt reads from stdin as a plain line.
+	// The interactive stdin supplies the (blank) REST credentials for the REST
+	// repo, then the (wrong) repository password, then a corrected password at the
+	// re-prompt. Use the non-stdin path so the re-prompt reads from stdin as a
+	// plain line.
 	stdin := strings.Join([]string{
+		"",         // REST username (blank → none)
+		"",         // REST password (blank → none)
 		"badpass",  // initial repository password prompt
 		"goodpass", // re-prompt after wrong-password
 	}, "\n") + "\n"
@@ -371,12 +502,15 @@ func TestInitInteractivePromptsForMissingValues(t *testing.T) {
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
 
-	// Non-TTY stdin: repo, set name, paths, then the password are read as plain
-	// lines in prompt order.
+	// Non-TTY stdin: repo, set name, paths, the (blank) REST username/password
+	// for the REST repo, then the repository password are read as plain lines in
+	// prompt order.
 	stdin := strings.Join([]string{
 		"rest:https://nas.local:8000/icebeam",
 		"laptop",
 		"/home/me, /etc",
+		"", // REST username (blank → none)
+		"", // REST password (blank → none)
 		"swordfish",
 	}, "\n") + "\n"
 

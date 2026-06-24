@@ -96,6 +96,30 @@ func (p *prompter) askYesNo(label string, def bool) (bool, error) {
 	}
 }
 
+// askOptional prints a prompt and returns the trimmed line the user enters,
+// allowing an empty answer (unlike ask, which repeats until non-empty). It is
+// used for genuinely optional input such as a REST username for a server with no
+// HTTP auth.
+func (p *prompter) askOptional(label string) (string, error) {
+	p.printf("%s (optional, leave blank for none): ", label)
+	return p.readLine()
+}
+
+// askSecretOptional prompts for a secret without echoing it when the input is a
+// terminal, falling back to a plain line read otherwise. Unlike askSecret it
+// allows an empty answer, for an optional secret such as a REST password when
+// the server has no HTTP auth.
+func (p *prompter) askSecretOptional(label string) (string, error) {
+	p.printf("%s (optional, leave blank for none): ", label)
+
+	if isTerminal(p.in) {
+		secret, err := readHiddenPassword(p.in)
+		p.println() // ReadPassword swallows the newline the user typed.
+		return secret, err
+	}
+	return p.readLine()
+}
+
 // askList prompts for a comma-separated list and returns the non-empty,
 // trimmed elements, repeating until at least one is given.
 func (p *prompter) askList(label string) ([]string, error) {
@@ -138,6 +162,19 @@ func (p *prompter) askSecret(label string) (string, error) {
 		}
 		p.println("A value is required.")
 	}
+}
+
+// readSecretLine reads one secret line from the prompter's input, trimming only
+// the trailing newline (a secret may contain leading/trailing spaces, unlike a
+// trimmed answer). It reads through the prompter's shared reader so a piped
+// secret followed by an interactive prompt does not lose buffered input. EOF is
+// treated as end of input. errCtx labels the wrapped read error.
+func (p *prompter) readSecretLine(errCtx string) (string, error) {
+	line, err := p.r.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("%s: %w", errCtx, err)
+	}
+	return strings.TrimRight(line, "\r\n"), nil
 }
 
 // readLine reads a single line, trims surrounding whitespace, and treats EOF as

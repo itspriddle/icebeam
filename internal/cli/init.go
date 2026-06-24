@@ -45,7 +45,6 @@ type initOptions struct {
 	backend           string
 	passwordStdin     bool
 	restPasswordStdin bool
-	force             bool
 }
 
 // newInitCommand builds the `icebeam init` command: a guided setup that writes
@@ -64,7 +63,11 @@ func newInitCommand() *cobra.Command {
 			"can be scripted. Secrets are never accepted on argv: a single secret may " +
 			"be read from stdin per run via --password-stdin (repository password) or " +
 			"--rest-password-stdin (REST-server password); the two are mutually " +
-			"exclusive.",
+			"exclusive.\n\n" +
+			"init is re-runnable: running it on an already-configured machine pre-fills " +
+			"every prompt with the current value and offers to keep stored secrets, so " +
+			"a single setting can be changed without re-entering everything or wiping " +
+			"the existing config.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runInit(cmd, opts)
@@ -81,21 +84,19 @@ func newInitCommand() *cobra.Command {
 	flags.StringVar(&opts.backend, "backend", "", "credential backend: auto, keychain, or file")
 	flags.BoolVar(&opts.passwordStdin, "password-stdin", false, "read the repository password from stdin (no echo); mutually exclusive with --rest-password-stdin")
 	flags.BoolVar(&opts.restPasswordStdin, "rest-password-stdin", false, "read the REST-server password from stdin (no echo); mutually exclusive with --password-stdin")
-	flags.BoolVar(&opts.force, "force", false, "overwrite an existing config")
 
 	return cmd
 }
 
-// runInit executes the init flow: resolve inputs, guard against clobbering an
-// existing config, then drive the validate-first setup engine, which probes the
-// repository *before* it writes config.toml or any secret.
+// runInit executes the init flow. It is re-runnable: when a config already
+// exists it is loaded and each value pre-fills the corresponding prompt (and
+// stored secrets offer a "keep existing" default), so a single setting can be
+// changed without re-entering everything or wiping the config. The collected
+// inputs then drive the validate-first setup engine, which probes the repository
+// *before* it writes config.toml or any secret.
 func runInit(cmd *cobra.Command, opts *initOptions) error {
 	configPath, err := config.ConfigPath()
 	if err != nil {
-		return err
-	}
-
-	if err := guardExistingConfig(configPath, opts.force); err != nil {
 		return err
 	}
 
@@ -103,22 +104,41 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 		return errors.New("only one secret can be read from stdin per run: pass --password-stdin or --rest-password-stdin, not both")
 	}
 
-	p := newPrompter(cmd.InOrStdin(), cmd.OutOrStdout())
-
-	if err := collectInputs(p, opts); err != nil {
-		return err
-	}
-
-	if err := collectRESTCredentials(p, opts); err != nil {
-		return err
-	}
-
-	password, err := collectPassword(p, opts)
+	// Load the existing config (if any) to pre-fill prompts. A missing config is
+	// the first-run case (existing stays nil); a malformed config is a real error.
+	existing, err := loadExistingConfig(configPath)
 	if err != nil {
 		return err
 	}
 
-	cfg := buildConfig(opts)
+	p := newPrompter(cmd.InOrStdin(), cmd.OutOrStdout())
+
+	if existing != nil {
+		p.printf("Existing config found at %s; press enter at any prompt to keep the current value.\n\n", configPath)
+	}
+
+	if err := collectInputs(p, opts, existing); err != nil {
+		return err
+	}
+
+	// Resolve the credential backend (flag overrides the loaded value) so any
+	// stored secrets can be loaded for "keep existing" defaults.
+	resolveBackend(opts, existing)
+	stored, err := loadStoredSecrets(opts.backend)
+	if err != nil {
+		return err
+	}
+
+	if err := collectRESTCredentials(p, opts, stored); err != nil {
+		return err
+	}
+
+	password, passwordChanged, err := collectPassword(p, opts, stored)
+	if err != nil {
+		return err
+	}
+
+	cfg := buildConfig(opts, existing)
 
 	logger, err := buildLogger(cfg, cmd.ErrOrStderr())
 	if err != nil {
@@ -133,6 +153,10 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 		password:     password,
 		restUsername: opts.restUsername,
 		restPassword: opts.restPassword,
+		// The repository password is only re-verified by the probe when it (or the
+		// repository URL) changed; an unchanged re-run skips the probe and rewrites
+		// an equivalent config, leaving stored secrets intact.
+		skipProbe: existing != nil && !passwordChanged && repoURLUnchanged(opts.repo, existing),
 	}
 
 	result, err := runSetup(cmd.Context(), p, logger, params)
@@ -144,33 +168,118 @@ func runInit(cmd *cobra.Command, opts *initOptions) error {
 	return nil
 }
 
-// guardExistingConfig refuses to proceed when a config already exists unless
-// force is set, pointing the user at the existing file.
-func guardExistingConfig(path string, force bool) error {
-	if force {
-		return nil
+// loadExistingConfig loads the current config to pre-fill prompts on a re-run. A
+// missing config (ErrNotConfigured) is the first-run case and returns nil
+// without error; a malformed config is surfaced so the user can fix it.
+func loadExistingConfig(path string) (*config.Config, error) {
+	cfg, err := config.LoadFile(path)
+	if err != nil {
+		if errors.Is(err, config.ErrNotConfigured) {
+			return nil, nil //nolint:nilnil // nil config + nil error means "first run, no defaults"
+		}
+		return nil, err
 	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("config already exists at %s; pass --force to overwrite it", path)
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat config %s: %w", path, err)
+	return cfg, nil
+}
+
+// resolveBackend sets the credential backend from the existing config when no
+// flag overrides it, so stored secrets are loaded from the same backend they
+// were written to.
+func resolveBackend(opts *initOptions, existing *config.Config) {
+	if opts.backend == "" && existing != nil {
+		opts.backend = existing.Credentials.Backend
 	}
-	return nil
+}
+
+// storedSecrets holds the secrets already in the credential store, used to offer
+// "keep existing" defaults on a re-run. Each has*-flag is true only when that
+// secret is actually stored.
+type storedSecrets struct {
+	repoPassword string
+	hasRepo      bool
+	restUsername string
+	hasRESTUser  bool
+	restPassword string
+	hasRESTPass  bool
+}
+
+// loadStoredSecrets reads any already-stored secrets so re-running setup can
+// offer to keep them. It opens the same backend the secrets were written to. A
+// missing secret is not an error (it simply has no "keep existing" default).
+func loadStoredSecrets(backend string) (*storedSecrets, error) {
+	configDir, err := config.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	store, err := credentials.Open(backend, configDir)
+	if err != nil {
+		return nil, err
+	}
+
+	s := &storedSecrets{}
+	s.repoPassword, s.hasRepo, err = getStoredSecret(store, credentials.RepoPassword)
+	if err != nil {
+		return nil, err
+	}
+	s.restUsername, s.hasRESTUser, err = getStoredSecret(store, credentials.RESTUsername)
+	if err != nil {
+		return nil, err
+	}
+	s.restPassword, s.hasRESTPass, err = getStoredSecret(store, credentials.RESTPassword)
+	if err != nil {
+		return nil, err
+	}
+	return s, nil
+}
+
+// getStoredSecret reads one secret, treating ErrNotFound as "not stored" (ok
+// false) rather than an error.
+func getStoredSecret(store credentials.CredentialStore, name string) (value string, ok bool, err error) {
+	value, err = store.Get(name)
+	if err != nil {
+		if errors.Is(err, credentials.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+// repoURLUnchanged reports whether the supplied repository URL matches the one in
+// the existing config (after the same trimming buildConfig applies).
+func repoURLUnchanged(repo string, existing *config.Config) bool {
+	return existing != nil && strings.TrimSpace(repo) == existing.Repository.URL
 }
 
 // collectInputs fills in any missing options interactively. Flag-supplied values
-// are left untouched so a fully-flagged invocation never prompts.
-func collectInputs(p *prompter, opts *initOptions) error {
+// are left untouched so a fully-flagged invocation never prompts. When an
+// existing config is supplied, its values pre-fill each prompt so a re-run can
+// accept the current value with an empty answer.
+func collectInputs(p *prompter, opts *initOptions, existing *config.Config) error {
+	existingSet := firstSet(existing)
+
 	if opts.repo == "" {
-		repo, err := p.ask("Repository URL (e.g. rest:https://nas.local:8000/icebeam)")
-		if err != nil {
-			return err
+		if existing != nil {
+			repo, err := p.askDefault("Repository URL (e.g. rest:https://nas.local:8000/icebeam)", existing.Repository.URL)
+			if err != nil {
+				return err
+			}
+			opts.repo = repo
+		} else {
+			repo, err := p.ask("Repository URL (e.g. rest:https://nas.local:8000/icebeam)")
+			if err != nil {
+				return err
+			}
+			opts.repo = repo
 		}
-		opts.repo = repo
 	}
 
 	if opts.setName == "" {
-		name, err := p.askDefault("First backup set name", "home")
+		def := "home"
+		if existingSet != nil && existingSet.Name != "" {
+			def = existingSet.Name
+		}
+		name, err := p.askDefault("First backup set name", def)
 		if err != nil {
 			return err
 		}
@@ -178,14 +287,31 @@ func collectInputs(p *prompter, opts *initOptions) error {
 	}
 
 	if len(opts.paths) == 0 {
-		paths, err := p.askList("Paths to back up (comma-separated)")
-		if err != nil {
-			return err
+		if existingSet != nil && len(existingSet.Paths) > 0 {
+			paths, err := p.askListDefault("Paths to back up (comma-separated)", existingSet.Paths)
+			if err != nil {
+				return err
+			}
+			opts.paths = paths
+		} else {
+			paths, err := p.askList("Paths to back up (comma-separated)")
+			if err != nil {
+				return err
+			}
+			opts.paths = paths
 		}
-		opts.paths = paths
 	}
 
 	return nil
+}
+
+// firstSet returns the first backup set of the existing config, or nil when
+// there is no existing config or it has no sets.
+func firstSet(existing *config.Config) *config.Set {
+	if existing == nil || len(existing.Sets) == 0 {
+		return nil
+	}
+	return &existing.Sets[0]
 }
 
 // collectRESTCredentials prompts for the REST-server HTTP username and password
@@ -196,9 +322,11 @@ func collectInputs(p *prompter, opts *initOptions) error {
 //
 // The username is non-secret (visible prompt); the password is hidden, or read
 // from stdin when --rest-password-stdin is set. Flag-supplied values suppress
-// their prompt, preserving the scriptable path. The collected secret reaches
-// restic only via the environment (RESTIC_REST_USERNAME/PASSWORD), never argv.
-func collectRESTCredentials(p *prompter, opts *initOptions) error {
+// their prompt, preserving the scriptable path. On a re-run, the username
+// pre-fills from the stored value and a stored password offers a "keep existing"
+// default. The collected secret reaches restic only via the environment
+// (RESTIC_REST_USERNAME/PASSWORD), never argv.
+func collectRESTCredentials(p *prompter, opts *initOptions, stored *storedSecrets) error {
 	repoURL, err := config.ParseRepoURL(opts.repo)
 	if err != nil {
 		return err
@@ -214,11 +342,19 @@ func collectRESTCredentials(p *prompter, opts *initOptions) error {
 	scripted := opts.passwordStdin || opts.restPasswordStdin
 
 	if opts.restUsername == "" && !scripted {
-		username, err := p.askOptional("REST-server username")
-		if err != nil {
-			return err
+		if stored.hasRESTUser {
+			username, err := p.askDefault("REST-server username", stored.restUsername)
+			if err != nil {
+				return err
+			}
+			opts.restUsername = username
+		} else {
+			username, err := p.askOptional("REST-server username")
+			if err != nil {
+				return err
+			}
+			opts.restUsername = username
 		}
-		opts.restUsername = username
 	}
 
 	if opts.restPasswordStdin {
@@ -233,48 +369,101 @@ func collectRESTCredentials(p *prompter, opts *initOptions) error {
 	}
 
 	if opts.restPassword == "" && !scripted {
-		password, err := p.askSecretOptional("REST-server password")
-		if err != nil {
-			return err
+		if stored.hasRESTPass {
+			password, kept, err := p.askSecretKeep("REST-server password")
+			if err != nil {
+				return err
+			}
+			if kept {
+				opts.restPassword = stored.restPassword
+			} else {
+				opts.restPassword = password
+			}
+		} else {
+			password, err := p.askSecretOptional("REST-server password")
+			if err != nil {
+				return err
+			}
+			opts.restPassword = password
 		}
-		opts.restPassword = password
 	}
 
 	return nil
 }
 
-// collectPassword resolves the repository password: from stdin when
-// --password-stdin is set, otherwise via a hidden interactive prompt. The stdin
-// read goes through the prompter's shared reader so a preceding piped secret does
-// not strand buffered input.
-func collectPassword(p *prompter, opts *initOptions) (string, error) {
+// collectPassword resolves the repository password and reports whether it
+// changed from the stored value. It reads from stdin when --password-stdin is
+// set, otherwise from a hidden interactive prompt. On a re-run with a stored
+// password the prompt offers a "keep existing" default; keeping it returns the
+// stored value with changed=false so the setup engine can skip re-verification.
+// The stdin read goes through the prompter's shared reader so a preceding piped
+// secret does not strand buffered input.
+func collectPassword(p *prompter, opts *initOptions, stored *storedSecrets) (password string, changed bool, err error) {
 	if opts.passwordStdin {
-		password, err := p.readSecretLine("read password from stdin")
+		password, err = p.readSecretLine("read password from stdin")
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if password == "" {
-			return "", errors.New("no password provided on stdin")
+			return "", false, errors.New("no password provided on stdin")
 		}
-		return password, nil
+		return password, password != stored.repoPassword, nil
 	}
-	return p.askSecret("Repository password")
+
+	if stored.hasRepo {
+		entered, kept, err := p.askSecretKeep("Repository password")
+		if err != nil {
+			return "", false, err
+		}
+		if kept {
+			return stored.repoPassword, false, nil
+		}
+		return entered, entered != stored.repoPassword, nil
+	}
+
+	password, err = p.askSecret("Repository password")
+	if err != nil {
+		return "", false, err
+	}
+	return password, true, nil
 }
 
-// buildConfig assembles a Config from the collected options, starting from the
-// defaults so min_version and log level are populated.
-func buildConfig(opts *initOptions) *config.Config {
-	cfg := config.Default()
+// buildConfig assembles a Config from the collected options. On a re-run it
+// starts from the existing config so values that have neither a flag nor a prompt
+// (excludes, tags, retention, and the rest of the config) are carried forward
+// rather than reset; flag-supplied excludes/tags override the loaded set. On a
+// first run it starts from the defaults so min_version and log level are
+// populated.
+func buildConfig(opts *initOptions, existing *config.Config) *config.Config {
+	var cfg config.Config
+	if existing != nil {
+		cfg = *existing
+	} else {
+		cfg = config.Default()
+	}
+
 	cfg.Repository.URL = strings.TrimSpace(opts.repo)
 	cfg.Credentials.Backend = opts.backend
-	cfg.Sets = []config.Set{
-		{
-			Name:    strings.TrimSpace(opts.setName),
-			Paths:   opts.paths,
-			Exclude: opts.excludes,
-			Tags:    opts.tags,
-		},
+
+	set := config.Set{
+		Name:  strings.TrimSpace(opts.setName),
+		Paths: opts.paths,
 	}
+	// Carry forward the existing set's excludes/tags unless a flag overrides them,
+	// so a re-run that changes only the paths does not silently drop them.
+	existingSet := firstSet(existing)
+	if opts.excludes != nil {
+		set.Exclude = opts.excludes
+	} else if existingSet != nil {
+		set.Exclude = existingSet.Exclude
+	}
+	if opts.tags != nil {
+		set.Tags = opts.tags
+	} else if existingSet != nil {
+		set.Tags = existingSet.Tags
+	}
+
+	cfg.Sets = []config.Set{set}
 	return &cfg
 }
 

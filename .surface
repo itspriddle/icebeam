@@ -30,7 +30,6 @@ FLAG icebeam forget --no-prune type=bool
 FLAG icebeam forget --prune type=bool
 FLAG icebeam init --backend type=string
 FLAG icebeam init --exclude type=stringArray
-FLAG icebeam init --force type=bool
 FLAG icebeam init --password-stdin type=bool
 FLAG icebeam init --path type=stringArray
 FLAG icebeam init --repo type=string

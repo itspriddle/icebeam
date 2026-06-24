@@ -32,6 +32,11 @@ type setupParams struct {
 	// credentials. They reach restic only via the environment, never argv.
 	restUsername string
 	restPassword string
+	// skipProbe is set on a re-run where neither the repository URL nor the
+	// repository password changed: the connection was verified on a prior run, so
+	// the engine rewrites an equivalent config and re-persists the unchanged
+	// secrets without probing or re-initializing the repository.
+	skipProbe bool
 }
 
 // setupResult reports what runSetup did so the caller can render a summary.
@@ -52,9 +57,18 @@ type setupResult struct {
 // the other inputs; any other failure offers a re-enter-or-abort choice, and an
 // abort leaves nothing on disk.
 func runSetup(ctx context.Context, p *prompter, logger *logging.Logger, params *setupParams) (*setupResult, error) {
-	created, err := probeRepository(ctx, p, logger, params)
-	if err != nil {
-		return nil, err
+	var created bool
+	if params.skipProbe {
+		// Re-run with an unchanged repository URL and password: the connection was
+		// already verified, so persist the (possibly otherwise-edited) config and
+		// re-store the unchanged secrets without probing or re-initializing.
+		p.println("Repository URL and password unchanged; skipping re-verification.")
+	} else {
+		var err error
+		created, err = probeRepository(ctx, p, logger, params)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// The probe succeeded (or confirmed a new repo). Now — and only now —

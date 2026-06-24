@@ -137,6 +137,23 @@ func (p *prompter) askList(label string) ([]string, error) {
 	}
 }
 
+// askListDefault prompts for a comma-separated list, showing the current values
+// as the default, and returns the entered list or the default when the user
+// submits an empty line. Used when re-running setup to pre-fill from an existing
+// config without forcing the user to re-type unchanged paths.
+func (p *prompter) askListDefault(label string, def []string) ([]string, error) {
+	p.printf("%s [%s]: ", label, strings.Join(def, ", "))
+	line, err := p.readLine()
+	if err != nil {
+		return nil, err
+	}
+	items := splitList(line)
+	if len(items) == 0 {
+		return def, nil
+	}
+	return items, nil
+}
+
 // askSecret prompts for a secret without echoing it when the input is a
 // terminal, falling back to a plain line read otherwise. It repeats until a
 // non-empty value is entered.
@@ -162,6 +179,29 @@ func (p *prompter) askSecret(label string) (string, error) {
 		}
 		p.println("A value is required.")
 	}
+}
+
+// askSecretKeep prompts for a secret when one is already stored, offering a
+// "keep existing" default: an empty answer keeps the current value (kept=true,
+// secret=""), and any entered value replaces it (kept=false). It is used when
+// re-running setup so the user can change one setting without re-typing a secret
+// they want to leave alone. The secret is never echoed on a terminal.
+func (p *prompter) askSecretKeep(label string) (secret string, kept bool, err error) {
+	p.printf("%s [keep existing, leave blank to keep]: ", label)
+
+	if isTerminal(p.in) {
+		secret, err = readHiddenPassword(p.in)
+		p.println() // ReadPassword swallows the newline the user typed.
+	} else {
+		secret, err = p.readLine()
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if secret == "" {
+		return "", true, nil
+	}
+	return secret, false, nil
 }
 
 // readSecretLine reads one secret line from the prompter's input, trimming only

@@ -349,56 +349,148 @@ func TestInitRejectsBothStdinSecretFlags(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "config must not be written when both stdin flags are passed")
 }
 
-func TestInitRefusesToClobberExistingConfig(t *testing.T) {
-	isolateXDG(t)
-
-	stub := &stubRunner{results: map[string]error{}}
-	withStubRunner(t, stub)
-
-	args := []string{
+// seedExistingConfig runs init once to leave a complete config and stored
+// secrets on the isolated XDG dir, returning the config path so a re-run test can
+// assert against the pre-filled defaults.
+func seedExistingConfig(t *testing.T, stub *stubRunner) string {
+	t.Helper()
+	_, err := runInitCmd(t, "pw\n",
 		"--repo", "rest:https://nas.local:8000/icebeam",
-		"--set", "home",
-		"--path", "/data",
-		"--backend", "file",
-		"--password-stdin",
-	}
-
-	// First init succeeds.
-	_, err := runInitCmd(t, "pw\n", args...)
+		"--set", "home", "--path", "/data",
+		"--exclude", "**/node_modules", "--tag", "home",
+		"--backend", "file", "--password-stdin",
+	)
 	require.NoError(t, err)
-
-	// Second init without --force refuses.
-	out, err := runInitCmd(t, "pw\n", args...)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "already exists")
-	assert.Contains(t, err.Error(), "--force")
-	assert.NotContains(t, out, "icebeam run")
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	return cfgPath
 }
 
-func TestInitForceOverwritesExistingConfig(t *testing.T) {
+func TestInitRerunPreFillsFromExistingConfig(t *testing.T) {
+	isolateXDG(t)
+
+	// Existing repo verified on the first run, then again on the re-run.
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	cfgPath := seedExistingConfig(t, stub)
+
+	// Re-run interactively, accepting every pre-filled default with empty input
+	// (repo URL, set name, paths, REST username, REST password, repo password),
+	// but changing the set name to "laptop".
+	stdin := strings.Join([]string{
+		"",       // repo URL → keep
+		"laptop", // set name → change
+		"",       // paths → keep
+		"",       // REST username → keep (none stored → blank)
+		"",       // REST password → keep (none stored → blank)
+		"",       // repo password → keep existing
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Existing config found")
+
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+	// Changed value applied; carried-forward values preserved.
+	assert.Equal(t, "rest:https://nas.local:8000/icebeam", cfg.Repository.URL)
+	require.Len(t, cfg.Sets, 1)
+	assert.Equal(t, "laptop", cfg.Sets[0].Name)
+	assert.Equal(t, []string{"/data"}, cfg.Sets[0].Paths)
+	assert.Equal(t, []string{"**/node_modules"}, cfg.Sets[0].Exclude)
+	assert.Equal(t, []string{"home"}, cfg.Sets[0].Tags)
+}
+
+func TestInitRerunKeepsExistingSecretAndSkipsProbe(t *testing.T) {
 	isolateXDG(t)
 
 	stub := &stubRunner{results: map[string]error{}}
 	withStubRunner(t, stub)
+	cfgPath := seedExistingConfig(t, stub)
 
-	_, err := runInitCmd(t, "pw\n",
-		"--repo", "rest:https://nas.local:8000/old",
-		"--set", "home", "--path", "/data", "--backend", "file", "--password-stdin",
-	)
-	require.NoError(t, err)
+	probesAfterSeed := len(stub.calls)
 
-	_, err = runInitCmd(t, "pw\n",
-		"--repo", "rest:https://nas.local:8000/new",
-		"--set", "home", "--path", "/data", "--backend", "file", "--password-stdin",
-		"--force",
-	)
+	// Re-run accepting all defaults including "keep existing" for the password.
+	// With the repo URL and password unchanged, the engine skips re-verification:
+	// no further probe runs.
+	stdin := strings.Join([]string{"", "", "", "", "", ""}, "\n") + "\n"
+	out, err := runInitCmd(t, stdin)
 	require.NoError(t, err)
+	assert.Contains(t, out, "skipping re-verification")
+
+	// No additional restic call (probe) was made on the unchanged re-run.
+	assert.Len(t, stub.calls, probesAfterSeed)
+
+	// The stored password is intact.
+	store, err := credentials.Open(credentials.BackendFile, dirOf(t, cfgPath))
+	require.NoError(t, err)
+	got, err := store.Get(credentials.RepoPassword)
+	require.NoError(t, err)
+	assert.Equal(t, "pw", got)
+}
+
+func TestInitRerunChangedRepoURLReVerifies(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	seedExistingConfig(t, stub)
+
+	probesAfterSeed := len(stub.calls)
+
+	// Change only the repository URL; keep everything else (including the stored
+	// password). A changed repo URL must re-verify even though the password is
+	// kept, so a probe runs.
+	stdin := strings.Join([]string{
+		"rest:https://nas.local:8000/moved", // repo URL → change
+		"",                                  // set name → keep
+		"",                                  // paths → keep
+		"",                                  // REST username → keep
+		"",                                  // REST password → keep
+		"",                                  // repo password → keep existing
+	}, "\n") + "\n"
+
+	out, err := runInitCmd(t, stdin)
+	require.NoError(t, err)
+	assert.NotContains(t, out, "skipping re-verification")
+
+	// A probe ran on the changed-URL re-run.
+	require.Greater(t, len(stub.calls), probesAfterSeed)
+	assert.Equal(t, []string{"cat", "config"}, stub.calls[probesAfterSeed])
 
 	cfgPath, err := config.ConfigPath()
 	require.NoError(t, err)
 	cfg, err := config.LoadFile(cfgPath)
 	require.NoError(t, err)
-	assert.Equal(t, "rest:https://nas.local:8000/new", cfg.Repository.URL)
+	assert.Equal(t, "rest:https://nas.local:8000/moved", cfg.Repository.URL)
+}
+
+func TestInitRerunFlagOverridesLoadedDefault(t *testing.T) {
+	isolateXDG(t)
+
+	stub := &stubRunner{results: map[string]error{}}
+	withStubRunner(t, stub)
+	seedExistingConfig(t, stub)
+
+	// A flag-supplied value overrides the loaded default and suppresses its
+	// prompt; the only prompt left is the (kept) password. The repo URL changed,
+	// so the probe runs.
+	out, err := runInitCmd(t, "\n",
+		"--repo", "rest:https://nas.local:8000/flagged",
+	)
+	require.NoError(t, err)
+	// The repo URL prompt was suppressed by the flag.
+	assert.NotContains(t, out, "Repository URL")
+
+	cfgPath, err := config.ConfigPath()
+	require.NoError(t, err)
+	cfg, err := config.LoadFile(cfgPath)
+	require.NoError(t, err)
+	assert.Equal(t, "rest:https://nas.local:8000/flagged", cfg.Repository.URL)
+	// Carried-forward set values from the loaded config are unchanged.
+	require.Len(t, cfg.Sets, 1)
+	assert.Equal(t, "home", cfg.Sets[0].Name)
+	assert.Equal(t, []string{"/data"}, cfg.Sets[0].Paths)
 }
 
 func TestInitWrongPasswordRetriesUntilCorrect(t *testing.T) {

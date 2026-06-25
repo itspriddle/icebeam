@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // Run executes a restic subcommand, streaming its combined output to the logger
@@ -40,9 +41,10 @@ func (r *Runner) Run(ctx context.Context, args ...string) error {
 		return fmt.Errorf("restic: start %s: %w", commandName(args), err)
 	}
 
-	r.streamOutput(stdout, commandName(args))
+	tail := &outputTail{}
+	r.streamOutput(stdout, commandName(args), tail)
 
-	return r.wait(ctx, cmd, args)
+	return r.wait(ctx, cmd, args, tail)
 }
 
 // RunJSON executes a restic subcommand with --json appended, captures its stdout,
@@ -84,9 +86,10 @@ func (r *Runner) captureJSON(ctx context.Context, args []string) ([]byte, error)
 		return nil, fmt.Errorf("restic: start %s: %w", commandName(args), err)
 	}
 
-	r.streamOutput(stderr, commandName(args))
+	tail := &outputTail{}
+	r.streamOutput(stderr, commandName(args), tail)
 
-	if err := r.wait(ctx, cmd, args); err != nil {
+	if err := r.wait(ctx, cmd, args, tail); err != nil {
 		return nil, err
 	}
 	return stdout.Bytes(), nil
@@ -117,23 +120,65 @@ func (r *Runner) command(ctx context.Context, args []string) (*exec.Cmd, error) 
 	return cmd, nil
 }
 
-// streamOutput reads the process output line by line and logs each line. With no
+// outputTail keeps a bounded tail of a command's output so a failed restic
+// invocation's ExitError can carry restic's fatal message. restic before 0.17.x
+// collapses repo-state failures (missing/locked repo, wrong password) onto the
+// generic exit code 1 and only names them in this text, which the ExitError
+// predicates match (see the match* helpers in exit.go). A nil *outputTail is a
+// no-op so callers that do not need it can pass nil.
+type outputTail struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+// maxTailLines bounds how many trailing output lines an outputTail retains. A
+// restic fatal message is at most a few lines, so a small window suffices.
+const maxTailLines = 20
+
+// add appends a line, dropping the oldest once maxTailLines is exceeded.
+func (t *outputTail) add(line string) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.lines = append(t.lines, line)
+	if len(t.lines) > maxTailLines {
+		t.lines = t.lines[len(t.lines)-maxTailLines:]
+	}
+}
+
+// String returns the retained tail joined by newlines (empty for a nil tail).
+func (t *outputTail) String() string {
+	if t == nil {
+		return ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Join(t.lines, "\n")
+}
+
+// streamOutput reads the process output line by line, logging each line and
+// recording it in tail (when non-nil) for failure classification. With no
 // logger, output is drained so the pipe never blocks the child.
-func (r *Runner) streamOutput(out io.Reader, command string) {
+func (r *Runner) streamOutput(out io.Reader, command string, tail *outputTail) {
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
+		tail.add(line)
 		if r.logger != nil {
 			r.logger.Info("restic output", "command", command, "line", line)
 		}
 	}
 }
 
-// wait waits for the process to exit and maps a non-zero exit into an *ExitError.
-// A context cancellation surfaces as the context's error (wrapped) so callers
-// can distinguish a user-requested abort from a restic failure with errors.Is.
-func (r *Runner) wait(ctx context.Context, cmd *exec.Cmd, args []string) error {
+// wait waits for the process to exit and maps a non-zero exit into an *ExitError,
+// attaching the captured output tail so the predicates can classify failures
+// that older restic reports only by message. A context cancellation surfaces as
+// the context's error (wrapped) so callers can distinguish a user-requested abort
+// from a restic failure with errors.Is.
+func (r *Runner) wait(ctx context.Context, cmd *exec.Cmd, args []string, tail *outputTail) error {
 	err := cmd.Wait()
 	if err == nil {
 		return nil
@@ -152,6 +197,7 @@ func (r *Runner) wait(ctx context.Context, cmd *exec.Cmd, args []string) error {
 			Code:    exitErr.ExitCode(),
 			Command: commandName(args),
 			err:     err,
+			output:  tail.String(),
 		}
 	}
 

@@ -85,12 +85,13 @@ type Set struct {
 
 // Default values applied to a fresh config.
 const (
-	// defaultMinVersion is the lowest restic icebeam supports. restic 0.17.0 is
-	// the first release to emit the distinct exit codes (10 repository-not-exist,
-	// 11 repository-locked, 12 wrong-password) that icebeam's *ExitError
-	// predicates classify; older restic collapses those onto exit code 1, so the
-	// predicates would silently degrade below this floor.
-	defaultMinVersion = "0.17.0"
+	// defaultMinVersion is the lowest restic icebeam supports. 0.16.0 is the
+	// version stock Ubuntu ships, so it is the floor. restic only emits the
+	// distinct repo-state exit codes (10 not-exist, 11 locked, 12 wrong-password)
+	// on the 0.17.x line; on 0.16.x they collapse onto exit code 1, so icebeam's
+	// *ExitError predicates fall back to matching restic's fatal-message text
+	// there (see internal/restic/exit.go).
+	defaultMinVersion = "0.16.0"
 	defaultLogLevel   = "info"
 
 	// Default retention policy established during setup so `icebeam forget` is

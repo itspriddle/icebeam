@@ -335,6 +335,60 @@ func TestRunMapsExitCodes(t *testing.T) {
 	}
 }
 
+func TestRunClassifiesLegacyExitMessages(t *testing.T) {
+	t.Parallel()
+
+	// restic <0.17.x collapses repo-state failures onto exit code 1 and names them
+	// only in its fatal-message text. The ExitError predicates fall back to that
+	// text (captured into the output tail by streamOutput); the stub emits the
+	// exact single-line messages restic 0.16.4 prints. See exit.go's match* helpers.
+	cases := []struct {
+		name   string
+		stderr string
+		assert func(t *testing.T, e *ExitError)
+	}{
+		{"no-repo", "Fatal: unable to open config file: stat /x/config: no such file or directory", func(t *testing.T, e *ExitError) {
+			t.Helper()
+			assert.True(t, e.IsRepoNotExist())
+			assert.False(t, e.IsWrongPassword())
+			assert.False(t, e.IsRepoLocked())
+		}},
+		{"wrong-password", "Fatal: wrong password or no key found", func(t *testing.T, e *ExitError) {
+			t.Helper()
+			assert.True(t, e.IsWrongPassword())
+			assert.False(t, e.IsRepoNotExist())
+		}},
+		{"locked", "unable to create lock in backend: repository is already locked by PID 123 on host by user", func(t *testing.T, e *ExitError) {
+			t.Helper()
+			assert.True(t, e.IsRepoLocked())
+			assert.False(t, e.IsRepoNotExist())
+		}},
+		{"unrelated", "Fatal: some other failure", func(t *testing.T, e *ExitError) {
+			t.Helper()
+			assert.False(t, e.IsRepoLocked())
+			assert.False(t, e.IsRepoNotExist())
+			assert.False(t, e.IsWrongPassword())
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stub := writeStub(t, "echo '"+tc.stderr+"' >&2\nexit 1\n")
+			r := newRunner(t, stub, nil)
+
+			err := r.Run(context.Background(), "cat", "config")
+			require.Error(t, err)
+
+			var exitErr *ExitError
+			require.ErrorAs(t, err, &exitErr)
+			assert.Equal(t, ExitGeneric, exitErr.Code)
+			tc.assert(t, exitErr)
+		})
+	}
+}
+
 func TestVersionMissingBinaryRunError(t *testing.T) {
 	t.Parallel()
 

@@ -31,8 +31,14 @@ type BackupSummary struct {
 // resticMessage is the envelope restic wraps each `--json` line in. Only the
 // summary line carries the totals we surface; status/error lines are streamed
 // to the logger like any other restic output.
+//
+// StructType is the equivalent field restic <0.17.0 used for `ls --json` before
+// Enhancement #4664 added message_type there; it is read as a fallback so `ls`
+// listings still parse on older restic (see parseLSStream). On every other
+// command, and on restic 0.17.0+, message_type is authoritative.
 type resticMessage struct {
 	MessageType string `json:"message_type"`
+	StructType  string `json:"struct_type"`
 }
 
 // Backup runs `restic backup` with --json, streaming restic's per-file/status
@@ -70,16 +76,17 @@ func (r *Runner) Backup(ctx context.Context, args ...string) (*BackupSummary, er
 	// restic writes the JSON stream to stdout; drain stderr to the logger so
 	// progress/errors stay visible without polluting the JSON parse. The
 	// goroutine returns when stderr closes (on process exit).
+	tail := &outputTail{}
 	stderrDone := make(chan struct{})
 	go func() {
-		r.streamOutput(stderr, "backup")
+		r.streamOutput(stderr, "backup", tail)
 		close(stderrDone)
 	}()
 
 	summary := r.parseBackupStream(stdout)
 	<-stderrDone
 
-	return summary, r.wait(ctx, cmd, backupArgs)
+	return summary, r.wait(ctx, cmd, backupArgs, tail)
 }
 
 // parseBackupStream reads restic's newline-delimited backup JSON, capturing the

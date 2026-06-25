@@ -35,9 +35,11 @@ imports restic's Go packages, so you stay on whatever restic version you trust.
 
 ## Requirements
 
-- A `restic` binary on `PATH` (or pointed at via config), **version 0.17.0 or
-  newer**. icebeam relies on the distinct exit codes restic introduced in 0.17.0
-  to tell a missing repository, a locked repository, and a wrong password apart.
+- A `restic` binary on `PATH` (or pointed at via config), **version 0.16.0 or
+  newer** (the version stock Ubuntu ships). To tell a missing repository, a locked
+  repository, and a wrong password apart, icebeam prefers the distinct exit codes
+  restic added in 0.17.0 and falls back to matching restic's message text on older
+  releases.
 - Supported platforms: `darwin/{arm64,amd64}` and `linux/{amd64,arm64}`. The
   Synology target is a static `linux/amd64` build.
 - Go 1.26+ to build from source.
@@ -120,7 +122,7 @@ keep_yearly  = 1
 [restic]
 # binary: explicit path to restic; empty = find on PATH.
 binary      = ""
-min_version = "0.17.0"
+min_version = "0.16.0"
 
 [log]
 # file: override the default log path; empty = XDG state dir.

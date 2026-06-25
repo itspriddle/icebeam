@@ -129,6 +129,33 @@ exit 0
 	assert.Empty(t, result.Nodes)
 }
 
+func TestLSParsesStructTypeStream(t *testing.T) {
+	t.Parallel()
+
+	// restic 0.16.x tags ls --json lines with struct_type instead of the
+	// message_type field 0.17.0 added (Enhancement #4664). parseLSStream falls back
+	// to struct_type so listings still parse; these lines mirror real restic 0.16.4
+	// output.
+	stub := writeStub(t, `
+echo '{"time":"2026-06-23T10:00:00Z","tree":"6e8c","paths":["/Users/josh"],"hostname":"macbook","username":"josh","id":"abc123deadbeef","short_id":"abc123de","struct_type":"snapshot"}'
+echo '{"name":"notes.txt","type":"file","path":"/Users/josh/notes.txt","size":1024,"permissions":"-rw-r--r--","mtime":"2026-06-23T10:00:00Z","struct_type":"node"}'
+echo '{"name":"sub","type":"dir","path":"/Users/josh/sub","permissions":"drwxr-xr-x","struct_type":"node"}'
+exit 0
+`)
+	r := newRunner(t, stub, nil)
+
+	result, err := r.LS(context.Background(), "latest")
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.Equal(t, "abc123deadbeef", result.Snapshot.ID)
+	assert.Equal(t, "macbook", result.Snapshot.Hostname)
+	require.Len(t, result.Nodes, 2)
+	assert.Equal(t, "/Users/josh/notes.txt", result.Nodes[0].Path)
+	assert.Equal(t, uint64(1024), result.Nodes[0].Size)
+	assert.Equal(t, "-rw-r--r--", result.Nodes[0].Mode)
+	assert.Equal(t, "dir", result.Nodes[1].Type)
+}
+
 func TestLSSurfacesExitError(t *testing.T) {
 	t.Parallel()
 

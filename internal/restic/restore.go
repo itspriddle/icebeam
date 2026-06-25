@@ -53,9 +53,10 @@ func (r *Runner) Dump(ctx context.Context, w io.Writer, args ...string) error {
 	// Drain stderr to the logger so progress/errors stay visible without
 	// polluting the binary stream copied to w. The goroutine returns when stderr
 	// closes on process exit.
+	tail := &outputTail{}
 	stderrDone := make(chan struct{})
 	go func() {
-		r.streamOutput(stderr, "dump")
+		r.streamOutput(stderr, "dump", tail)
 		close(stderrDone)
 	}()
 
@@ -65,7 +66,7 @@ func (r *Runner) Dump(ctx context.Context, w io.Writer, args ...string) error {
 	_, copyErr := io.Copy(w, stdout)
 	<-stderrDone
 
-	waitErr := r.wait(ctx, cmd, dumpArgs)
+	waitErr := r.wait(ctx, cmd, dumpArgs, tail)
 	if waitErr != nil {
 		return waitErr
 	}

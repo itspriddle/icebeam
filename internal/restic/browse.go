@@ -133,16 +133,17 @@ func (r *Runner) LS(ctx context.Context, args ...string) (*LSResult, error) {
 
 	// restic writes the JSON stream to stdout; drain stderr to the logger so
 	// progress/errors stay visible without polluting the JSON parse.
+	tail := &outputTail{}
 	stderrDone := make(chan struct{})
 	go func() {
-		r.streamOutput(stderr, "ls")
+		r.streamOutput(stderr, "ls", tail)
 		close(stderrDone)
 	}()
 
 	result := r.parseLSStream(stdout)
 	<-stderrDone
 
-	if err := r.wait(ctx, cmd, lsArgs); err != nil {
+	if err := r.wait(ctx, cmd, lsArgs, tail); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -152,6 +153,10 @@ func (r *Runner) LS(ctx context.Context, args ...string) (*LSResult, error) {
 // "snapshot" message and every "node" message. Unrecognized lines are forwarded
 // to the logger. The reader is drained fully (a StdoutPipe constraint) before the
 // caller waits.
+//
+// restic 0.17.0 (Enhancement #4664) added the message_type field to ls; restic
+// 0.16.x tags the same lines with struct_type instead. The effective type prefers
+// message_type and falls back to struct_type so listings parse on both.
 func (r *Runner) parseLSStream(out io.Reader) *LSResult {
 	scanner := bufio.NewScanner(out)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -167,7 +172,12 @@ func (r *Runner) parseLSStream(out io.Reader) *LSResult {
 			continue
 		}
 
-		switch msg.MessageType {
+		msgType := msg.MessageType
+		if msgType == "" {
+			msgType = msg.StructType
+		}
+
+		switch msgType {
 		case "snapshot":
 			_ = json.Unmarshal(line, &result.Snapshot)
 		case "node":
